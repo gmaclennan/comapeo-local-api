@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { describe, test, type TestContext } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
+import { isDeepStrictEqual } from 'node:util'
 
 import { RpcError, type Notification } from './helpers/client.ts'
 import { observationValue, trackValue } from './helpers/fixtures.ts'
@@ -101,7 +102,13 @@ describe('two devices', () => {
 
 		assert.notDeepEqual(listenerCounts(), before)
 		await local.leaveProject(projectId)
-		await delay(100)
+		const deadline = Date.now() + 5_000
+		while (
+			!isDeepStrictEqual(listenerCounts(), before) &&
+			Date.now() < deadline
+		) {
+			await delay(20)
+		}
 		assert.deepEqual(listenerCounts(), before, 'subscriptions ended')
 
 		const err = await stays

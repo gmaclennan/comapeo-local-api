@@ -10,7 +10,7 @@ import { DevCommands } from './commands.ts'
 import { createDevManager } from './manager.ts'
 import { seedProject } from './seed.ts'
 
-const USAGE = `Usage: comapeo-local-api-dev [options]
+const USAGE = `Usage: node src/dev/cli.ts [options]
 
 Serves generated CoMapeo test projects on the local API, from an in-memory
 core, until interrupted. Prints "READY <discovery file path>" when ready.

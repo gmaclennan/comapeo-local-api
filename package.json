@@ -76,12 +76,15 @@
 		"@changesets/cli": "^3.0.3",
 		"@comapeo/core": "^7.7.0",
 		"@eslint/js": "^10.0.1",
+		"@mapeo/default-config": "^6.0.0",
 		"@trivago/prettier-plugin-sort-imports": "^6.0.2",
 		"@types/node": "^22.20.5",
 		"c8": "^12.0.0",
 		"eslint": "^10.14.0",
+		"fastify": "^4.29.1",
 		"globals": "^17.14.0",
 		"husky": "^9.1.7",
+		"jpeg-js": "^0.4.4",
 		"knip": "^6.45.0",
 		"lint-staged": "^17.6.0",
 		"npm-run-all2": "^9.0.4",
@@ -92,18 +95,12 @@
 		"typescript-eslint": "^8.72.2"
 	},
 	"dependencies": {
-		"@mapeo/default-config": "^6.0.0",
-		"custom-error-creator": "^1.4.0",
-		"fastify": "^4.29.1",
-		"jpeg-js": "^0.4.4"
+		"custom-error-creator": "^1.4.0"
 	},
 	"overrides": {
 		"better-sqlite3": "^12.11.1"
 	},
 	"peerDependencies": {
 		"@comapeo/core": "^7.5.2"
-	},
-	"bin": {
-		"comapeo-local-api-dev": "./dist/dev/cli.js"
 	}
 }

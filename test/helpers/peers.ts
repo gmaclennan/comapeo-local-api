@@ -1,6 +1,7 @@
 import { once } from 'node:events'
 import * as fs from 'node:fs/promises'
 import type { TestContext } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import { roles, type MapeoManager } from '@comapeo/core'
 
@@ -15,6 +16,19 @@ async function waitForPeer(manager: MapeoManager, deviceId: string) {
 			(p) => p.deviceId === deviceId && p.status === 'connected',
 		)
 	while (!(await connected())) await once(manager, 'local-peers')
+}
+
+// Until the project settings sync, core lists the project as "joining", not "joined"
+async function waitForJoined(manager: MapeoManager, projectId: string) {
+	const deadline = Date.now() + 10_000
+	const joined = async () =>
+		(await manager.listProjects()).some(
+			(p) => p.projectId === projectId && p.status === 'joined',
+		)
+	while (!(await joined())) {
+		if (Date.now() > deadline) throw new Error('Project never became joined')
+		await delay(20)
+	}
 }
 
 /**
@@ -55,6 +69,7 @@ export async function setupPeers(t: TestContext) {
 	const localProject = await local.getProject(projectId)
 	remoteProject.$sync.start()
 	localProject.$sync.start()
+	await waitForJoined(local, projectId)
 
 	const discoveryDir = await tempDir(t)
 	const server = createLocalApiServer({
