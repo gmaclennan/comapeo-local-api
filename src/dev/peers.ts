@@ -31,11 +31,11 @@ export async function connectPeers(
 	a: MapeoManager,
 	b: MapeoManager,
 ): Promise<() => Promise<void>> {
-	const [aServer, bServer] = (await Promise.all(
+	const [, bServer] = (await Promise.all(
 		[a, b].map((m) => m.startLocalPeerDiscoveryServer()),
 	)) as [{ name: string; port: number }, { name: string; port: number }]
+	// Dialling both ways makes two connections, and core's closing one of them can abort an invite
 	a.connectLocalPeer({ address: '127.0.0.1', ...bServer })
-	b.connectLocalPeer({ address: '127.0.0.1', ...aServer })
 	await Promise.all([waitForPeer(a, b.deviceId), waitForPeer(b, a.deviceId)])
 	return async () => {
 		await Promise.all(
