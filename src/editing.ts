@@ -220,6 +220,7 @@ export class Editor {
 			for (const [column, value] of sent) {
 				let field = column.field
 				if (column.edit?.fieldOf) {
+					if (held) continue
 					field = after && column.edit.fieldOf.get(after.docId)
 					if (!field) {
 						return refusal(

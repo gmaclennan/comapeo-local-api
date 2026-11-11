@@ -720,6 +720,18 @@ describe('changing the category', () => {
 		const cases: Array<[Record<string, unknown>, string]> = [
 			[{ categoryId: 'nope' }, 'unknown-category'],
 			[{ categoryId: await category('New line') }, 'category-not-for-layer'],
+			// Check 8 needs a category to look the column up in
+			[
+				{ categoryId: 'nope', properties: { water_source: 'well' } },
+				'unknown-category',
+			],
+			[
+				{
+					categoryId: await category('New line'),
+					properties: { water_source: 'well' },
+				},
+				'category-not-for-layer',
+			],
 			// The default config's "New line" has the same tags and comes first
 			[{ categoryId: await category('New point') }, 'category-would-not-show'],
 		]
