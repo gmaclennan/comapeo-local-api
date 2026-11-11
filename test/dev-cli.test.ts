@@ -389,3 +389,79 @@ test('dev command as a member, with editing: the other device, roles and forks',
 	const [code] = await once(child, 'exit')
 	assert.equal(code, 0)
 })
+
+test('dev command quits at once with an edit reply held back, leaving no files', async (t) => {
+	const discoveryDir = await tempDir(t)
+	const tmp = await tempDir(t)
+	const child = spawn(
+		process.execPath,
+		[
+			CLI,
+			'--discovery-dir',
+			discoveryDir,
+			'--allow-edits',
+			'--edit-delay',
+			'60000',
+			'--observations',
+			'3',
+			'--photos',
+			'1',
+			'--tracks',
+			'0',
+			'--projects',
+			'1',
+		],
+		{
+			stdio: ['pipe', 'pipe', 'inherit'],
+			env: { ...process.env, TMPDIR: tmp, TMP: tmp, TEMP: tmp },
+		},
+	)
+	t.after(() => {
+		if (child.exitCode === null) child.kill('SIGKILL')
+	})
+	const lines = readline.createInterface({ input: child.stdout })
+	let discoveryFilePath = ''
+	for await (const line of lines) {
+		if (line.startsWith('READY ')) {
+			discoveryFilePath = line.slice('READY '.length)
+			break
+		}
+	}
+	const [editor, watcher] = await Promise.all([
+		TestClient.fromDiscoveryFile(discoveryFilePath),
+		TestClient.fromDiscoveryFile(discoveryFilePath),
+	])
+	const [{ projectId }] = (await editor.request('projects.list')).projects
+	await watcher.request('subscribe', { projectId })
+	const {
+		features: [feature],
+	} = await editor.request('layers.getFeatures', {
+		projectId,
+		layerId: 'observations',
+		limit: 1,
+	})
+	const held = editor
+		.request('features.update', {
+			projectId,
+			layerId: 'observations',
+			id: feature.id,
+			version: feature.version,
+			forks: feature.forks,
+			properties: { notes: 'held back' },
+		})
+		.catch((err: unknown) => err)
+	await watcher.waitForNotification(
+		(n) =>
+			n.method === 'layer.changed' &&
+			(n.params.ids as string[]).includes(feature.id),
+	)
+
+	const started = Date.now()
+	child.stdin.write('quit\n')
+	const [code] = await once(child, 'exit')
+	assert.equal(code, 0)
+	assert.ok(Date.now() - started < 3000, `${Date.now() - started} ms`)
+	await held
+	await assert.rejects(fs.access(discoveryFilePath), { code: 'ENOENT' })
+	assert.deepEqual(await fs.readdir(tmp), [])
+})

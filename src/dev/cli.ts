@@ -112,21 +112,29 @@ async function main() {
 		{ editReplyDelayMs },
 	)
 
+	let discoveryFilePath: string | null = null
 	let stopping = false
 	const stop = async (code: number) => {
 		if (stopping) return
 		stopping = true
 		// Closing two syncing managers has been seen to hang; never wait for ever
-		await Promise.race([
+		const gaveUp = await Promise.race([
 			(async () => {
 				await server.close().catch(() => {})
 				await disconnect?.().catch(() => {})
 				await Promise.all(
 					[dev, remoteDev].map((d) => d?.close().catch(() => {})),
 				)
+				return false
 			})(),
-			delay(5000),
+			delay(5000, true),
 		])
+		if (gaveUp) {
+			if (discoveryFilePath) await removeOwnDiscoveryFile(discoveryFilePath)
+			for (const d of [dev, remoteDev]) {
+				if (d) await fs.rm(d.storageDir, { recursive: true, force: true })
+			}
+		}
 		await fs.rm(mediaDir, { recursive: true, force: true })
 		process.exit(code)
 	}
@@ -213,7 +221,7 @@ async function main() {
 			projects.push({ projectId, project, remote: created })
 		}
 
-		const { discoveryFilePath } = await server.listen()
+		;({ discoveryFilePath } = await server.listen())
 		console.log(`READY ${discoveryFilePath}`)
 
 		const commands = new DevCommands(projects, seed)
@@ -243,6 +251,18 @@ async function main() {
 	} catch (err) {
 		log(err instanceof Error ? (err.stack ?? err.message) : String(err))
 		await stop(1)
+	}
+}
+
+/** Removes the discovery file unless another server has since written its own there. */
+async function removeOwnDiscoveryFile(filePath: string) {
+	try {
+		const { pid } = JSON.parse(await fs.readFile(filePath, 'utf8')) as {
+			pid?: unknown
+		}
+		if (pid === process.pid) await fs.rm(filePath, { force: true })
+	} catch {
+		// Already gone or unreadable: nothing of ours to remove
 	}
 }
 

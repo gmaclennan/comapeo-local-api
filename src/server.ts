@@ -344,8 +344,13 @@ export function createServer(
 	})
 	const { editReplyDelayMs = 0, ...hooks } = internal
 	const editor = new Editor(data, subscriptions, hooks)
+	const releasing = new AbortController()
 	const afterEdit = () =>
-		editReplyDelayMs > 0 ? delay(editReplyDelayMs) : undefined
+		editReplyDelayMs > 0
+			? delay(editReplyDelayMs, undefined, {
+					signal: releasing.signal,
+				}).catch(() => {})
+			: undefined
 	const connections = new Set<Connection>()
 	const inFlight = new Set<Promise<void>>()
 	const secret = generateSecret()
@@ -535,6 +540,7 @@ export function createServer(
 		try {
 			for (const connection of [...connections]) connection.destroy()
 			data.abort()
+			releasing.abort()
 			// A running handler can hold a media server connection open, delaying the host's close
 			await Promise.all(inFlight)
 			subscriptions.close()
