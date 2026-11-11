@@ -12,7 +12,7 @@ npm run format      # prettier
 npm run dev -- --discovery-dir <dir>   # dev server with generated projects
 ```
 
-`docs/PROTOCOL.md` is the wire contract and the source of truth; change its meaning only by adding a protocol version.
+`docs/PROTOCOL.md` is the wire contract and the source of truth. Change it only by adding a protocol version, or by an addition its "Changes within a version" section allows; record such additions in that section's list.
 
 ## Layout
 
