@@ -18,6 +18,7 @@ import { APP, setup, tempDir } from './helpers/server.ts'
 const OBSERVATION_BUILTINS = [
 	'id',
 	'category',
+	'notes',
 	'created_at',
 	'updated_at',
 	'created_by',
@@ -136,7 +137,7 @@ describe('errors', () => {
 		const { client, projectId } = await setup(t)
 		const c = await client()
 		assert.equal(
-			(await rpcError(c.request('features.update', {}))).code,
+			(await rpcError(c.request('features.create', {}))).code,
 			'METHOD_NOT_FOUND',
 		)
 		assert.equal(

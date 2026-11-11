@@ -15,17 +15,33 @@ type ColumnRole = 'builtin' | 'field' | 'tags'
 
 type OptionValue = string | number | boolean | null
 
+type FieldDoc = Field & { docId: string }
+
+interface ColumnEdit {
+	/**
+	 * The field each category validates this column's values against, by
+	 * category id; null when the column can be changed on any feature (notes).
+	 */
+	fieldOf: Map<string, FieldDoc> | null
+}
+
 export interface Column {
 	name: string
 	type: ColumnType
 	label: string
 	role: ColumnRole
 	options?: Array<{ value: OptionValue; label: string }>
-	/** Not sent to clients: the tag key a field column reads */
+	/** Not sent to clients: the tag key a field or notes column reads */
 	tagKey?: string
 	/** Not sent to clients: the built-in value this column holds */
 	builtin?: string
+	/** Not sent to clients: the field that describes a field column */
+	field?: FieldDoc
+	/** Present when the column can be changed with features.update */
+	edit?: ColumnEdit
 }
+
+export const NOTES_TAG = 'notes'
 
 interface BuiltinSpec {
 	key: string
@@ -33,9 +49,12 @@ interface BuiltinSpec {
 	label: string
 }
 
-const COMMON_BUILTINS: BuiltinSpec[] = [
+const IDENTITY_BUILTINS: BuiltinSpec[] = [
 	{ key: 'id', type: 'string', label: 'ID' },
 	{ key: 'category', type: 'string', label: 'Category' },
+]
+
+const RECORD_BUILTINS: BuiltinSpec[] = [
 	{ key: 'created_at', type: 'datetime', label: 'Created' },
 	{ key: 'updated_at', type: 'datetime', label: 'Updated' },
 	{ key: 'created_by', type: 'string', label: 'Created by' },
@@ -43,7 +62,9 @@ const COMMON_BUILTINS: BuiltinSpec[] = [
 ]
 
 export const OBSERVATION_BUILTINS: BuiltinSpec[] = [
-	...COMMON_BUILTINS,
+	...IDENTITY_BUILTINS,
+	{ key: NOTES_TAG, type: 'string', label: 'Notes' },
+	...RECORD_BUILTINS,
 	{ key: 'accuracy', type: 'number', label: 'GPS accuracy (m)' },
 	{ key: 'altitude', type: 'number', label: 'Altitude (m)' },
 	{ key: 'photo_count', type: 'integer', label: 'Photos' },
@@ -51,7 +72,8 @@ export const OBSERVATION_BUILTINS: BuiltinSpec[] = [
 ]
 
 export const TRACK_BUILTINS: BuiltinSpec[] = [
-	...COMMON_BUILTINS,
+	...IDENTITY_BUILTINS,
+	...RECORD_BUILTINS,
 	{ key: 'start_time', type: 'datetime', label: 'Start time' },
 	{ key: 'end_time', type: 'datetime', label: 'End time' },
 ]
@@ -168,25 +190,100 @@ function fieldColumnType(field: Field): ColumnType {
 	}
 }
 
+/** Option values as clients see and send them. */
+export function optionsAsSent(field: Field, type: ColumnType) {
+	return (field.options ?? []).map((o) => ({
+		value:
+			type === 'string' || type === 'string_list'
+				? o.value === null
+					? null
+					: String(o.value)
+				: o.value,
+		label: o.label,
+	}))
+}
+
+const EDITABLE_FIELD_TYPES: ReadonlySet<string> = new Set([
+	'text',
+	'number',
+	'selectOne',
+	'selectMultiple',
+	'date',
+])
+
+function fieldCanBeEdited(field: Field): boolean {
+	if (!EDITABLE_FIELD_TYPES.has(field.type)) return false
+	const choice = field.type === 'selectOne' || field.type === 'selectMultiple'
+	if (!choice) return true
+	const options = optionsAsSent(field, fieldColumnType(field))
+	const values = options.map((o) => o.value)
+	return values.length > 0 && new Set(values).size === values.length
+}
+
+function sameOptions(a: Column['options'], b: Column['options']): boolean {
+	const x = a ?? []
+	const y = b ?? []
+	return (
+		x.length === y.length &&
+		x.every((o, i) => o.value === y[i]?.value && o.label === y[i]?.label)
+	)
+}
+
+/** Which categories can be given a value in a field column, by their own field. */
+function fieldEdit(
+	column: Column,
+	presets: Array<Preset & { docId: string }>,
+	fieldsById: Map<string, FieldDoc>,
+	geometry: 'point' | 'line',
+): ColumnEdit | undefined {
+	const describing = column.field as FieldDoc
+	if (!fieldCanBeEdited(describing)) return undefined
+	if (column.tagKey === NOTES_TAG) return { fieldOf: null }
+	const fieldOf = new Map<string, FieldDoc>()
+	for (const preset of presets) {
+		if (!preset.geometry.includes(geometry) || fieldOf.has(preset.docId)) {
+			continue
+		}
+		for (const ref of preset.fieldRefs) {
+			const field = fieldsById.get(ref.docId)
+			if (!field || field.tagKey !== column.tagKey) continue
+			const type = fieldColumnType(field)
+			if (
+				fieldCanBeEdited(field) &&
+				type === column.type &&
+				sameOptions(optionsAsSent(field, type), column.options)
+			) {
+				fieldOf.set(preset.docId, field)
+				break
+			}
+		}
+	}
+	return fieldOf.size > 0 ? { fieldOf } : undefined
+}
+
 /**
  * Builds a layer's columns: built-ins, one column per field used by the
  * layer's categories (in category then field order), then the tags column.
+ * With `editable`, the notes and field columns that can be changed carry
+ * `edit`.
  */
 export function buildColumns({
 	builtins,
 	presets,
 	fields,
 	geometry,
+	editable = false,
 }: {
 	builtins: BuiltinSpec[]
-	presets: Preset[]
-	fields: Array<Field & { docId: string }>
+	presets: Array<Preset & { docId: string }>
+	fields: FieldDoc[]
 	geometry: 'point' | 'line'
+	editable?: boolean
 }): Column[] {
 	const fieldsById = new Map(fields.map((f) => [f.docId, f]))
-	const orderedFields: Array<Field & { docId: string }> = []
+	const orderedFields: FieldDoc[] = []
 	const seenFieldIds = new Set<string>()
-	const addField = (field: (Field & { docId: string }) | undefined) => {
+	const addField = (field: FieldDoc | undefined) => {
 		if (!field || seenFieldIds.has(field.docId)) return
 		seenFieldIds.add(field.docId)
 		orderedFields.push(field)
@@ -197,7 +294,7 @@ export function buildColumns({
 	}
 	for (const field of fields) if (field.universal) addField(field)
 
-	const fieldsByTagKey = new Map<string, Field & { docId: string }>()
+	const fieldsByTagKey = new Map<string, FieldDoc>()
 	for (const field of orderedFields) {
 		if (!fieldsByTagKey.has(field.tagKey)) {
 			fieldsByTagKey.set(field.tagKey, field)
@@ -215,17 +312,14 @@ export function buildColumns({
 			label: field.label || field.tagKey,
 			role: 'field',
 			tagKey: field.tagKey,
+			field,
 		}
 		if (field.options && field.options.length > 0) {
-			column.options = field.options.map((o) => ({
-				value:
-					type === 'string' || type === 'string_list'
-						? o.value === null
-							? null
-							: String(o.value)
-						: o.value,
-				label: o.label,
-			}))
+			column.options = optionsAsSent(field, type)
+		}
+		if (editable) {
+			const edit = fieldEdit(column, presets, fieldsById, geometry)
+			if (edit) column.edit = edit
 		}
 		fieldColumns.push(column)
 	}
@@ -235,13 +329,23 @@ export function buildColumns({
 		while (usedFieldNames.has(name)) name = `comapeo_${name}`
 		return name
 	}
-	const builtinColumns: Column[] = builtins.map((b) => ({
-		name: builtinName(b.key),
-		type: b.type,
-		label: b.label,
-		role: 'builtin',
-		builtin: b.key,
-	}))
+	const builtinColumns: Column[] = []
+	for (const b of builtins) {
+		// A field on the notes tag is the notes column
+		if (b.key === NOTES_TAG && fieldsByTagKey.has(NOTES_TAG)) continue
+		const column: Column = {
+			name: builtinName(b.key),
+			type: b.type,
+			label: b.label,
+			role: 'builtin',
+			builtin: b.key,
+		}
+		if (b.key === NOTES_TAG) {
+			column.tagKey = NOTES_TAG
+			if (editable) column.edit = { fieldOf: null }
+		}
+		builtinColumns.push(column)
+	}
 	const tagsColumn: Column = {
 		name: builtinName(TAGS_KEY),
 		type: 'json',
@@ -251,16 +355,29 @@ export function buildColumns({
 	return [...builtinColumns, ...fieldColumns, tagsColumn]
 }
 
-export function publicColumn(column: Column) {
+function describedColumn(column: Column) {
 	const { name, type, label, role, options } = column
 	return options
 		? { name, type, label, role, options }
 		: { name, type, label, role }
 }
 
+export function publicColumn(column: Column) {
+	const out: ReturnType<typeof describedColumn> & {
+		editable?: true
+		categoryIds?: string[]
+	} = describedColumn(column)
+	if (column.edit) {
+		out.editable = true
+		if (column.edit.fieldOf) out.categoryIds = [...column.edit.fieldOf.keys()]
+	}
+	return out
+}
+
+/** Covers what describes the columns, not whether they can be edited. */
 export function schemaVersion(columns: Column[]): string {
 	return createHash('sha256')
-		.update(JSON.stringify(columns.map(publicColumn)))
+		.update(JSON.stringify(columns.map(describedColumn)))
 		.digest('base64url')
 		.slice(0, 16)
 }
@@ -269,7 +386,7 @@ type TagValue =
 	string | number | boolean | null | Array<string | number | boolean | null>
 
 const DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i
-const ISO_8601 =
+export const ISO_8601 =
 	/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/
 
 /** Converts a tag value to the column's type, or null if it cannot be. */

@@ -11,6 +11,8 @@ export interface Subscriber {
 interface Watch {
 	project: MapeoProject
 	subscribers: Set<Subscriber>
+	/** Kept while the project's cached categories depend on this watch */
+	held: boolean
 	detach(): void
 	changed: Map<LayerId, Set<string>>
 	schemaChanged: boolean
@@ -42,13 +44,38 @@ function safely(call: () => unknown) {
 export class Subscriptions {
 	#watches = new Map<string, Watch>()
 	#isJoined: (projectId: string) => Promise<boolean>
+	#onSchemaChange: (projectId: string) => void
 
-	/** `isJoined` is checked when a project closes or this device's role changes. */
-	constructor(isJoined: (projectId: string) => Promise<boolean>) {
+	/**
+	 * `isJoined` is checked when a project closes or this device's role
+	 * changes. `onSchemaChange` is called at once when a project's categories,
+	 * fields or translations change, and when its watch stops.
+	 */
+	constructor({
+		isJoined,
+		onSchemaChange,
+	}: {
+		isJoined: (projectId: string) => Promise<boolean>
+		onSchemaChange: (projectId: string) => void
+	}) {
 		this.#isJoined = isJoined
+		this.#onSchemaChange = onSchemaChange
 	}
 
 	add(projectId: string, project: MapeoProject, subscriber: Subscriber) {
+		this.#watch(projectId, project).subscribers.add(subscriber)
+	}
+
+	/**
+	 * Watches the project for schema changes until it closes or is left, so
+	 * that its categories can be cached. Returns false when it cannot.
+	 */
+	hold(projectId: string, project: MapeoProject): boolean {
+		this.#watch(projectId, project).held = true
+		return this.#watches.get(projectId)?.project === project
+	}
+
+	#watch(projectId: string, project: MapeoProject): Watch {
 		let watch = this.#watches.get(projectId)
 		// A different instance means the project was closed or left and opened again
 		if (!watch || watch.project !== project) {
@@ -58,14 +85,16 @@ export class Subscriptions {
 			for (const s of previous?.subscribers ?? []) watch.subscribers.add(s)
 			this.#watches.set(projectId, watch)
 		}
-		watch.subscribers.add(subscriber)
+		return watch
 	}
 
 	remove(projectId: string, subscriber: Subscriber) {
 		const watch = this.#watches.get(projectId)
 		if (!watch) return
 		watch.subscribers.delete(subscriber)
-		if (watch.subscribers.size === 0) this.#stop(projectId, watch)
+		if (watch.subscribers.size === 0 && !watch.held) {
+			this.#stop(projectId, watch)
+		}
 	}
 
 	removeAll(subscriber: Subscriber) {
@@ -84,13 +113,17 @@ export class Subscriptions {
 		watch.detach()
 		if (watch.timer) clearTimeout(watch.timer)
 		watch.timer = null
-		if (this.#watches.get(projectId) === watch) this.#watches.delete(projectId)
+		if (this.#watches.get(projectId) === watch) {
+			this.#watches.delete(projectId)
+			this.#onSchemaChange(projectId)
+		}
 	}
 
 	#attach(projectId: string, project: MapeoProject): Watch {
 		const watch: Watch = {
 			project,
 			subscribers: new Set(),
+			held: false,
 			detach: () => {},
 			changed: new Map(),
 			schemaChanged: false,
@@ -111,6 +144,9 @@ export class Subscriptions {
 				schedule()
 			}
 		const onSchema: DocsListener = () => {
+			if (this.#watches.get(projectId) === watch) {
+				this.#onSchemaChange(projectId)
+			}
 			watch.schemaChanged = true
 			schedule()
 		}
@@ -128,7 +164,10 @@ export class Subscriptions {
 		}
 
 		const isCurrent = () => this.#watches.get(projectId) === watch
-		const checkJoined = () => {
+		const onRoleChange = () => {
+			// What this device may edit has changed
+			watch.schemaChanged = true
+			schedule()
 			this.#isJoined(projectId).then(
 				(joined) => {
 					if (!joined && isCurrent()) this.#stop(projectId, watch)
@@ -139,14 +178,14 @@ export class Subscriptions {
 		const onClose = () => {
 			if (isCurrent()) this.#stop(projectId, watch)
 		}
-		project.on('own-role-change', checkJoined)
+		project.on('own-role-change', onRoleChange)
 		project.once('close', onClose)
 
 		watch.detach = () => {
 			for (const [emitter, listener] of listeners) {
 				safely(() => emitter.off('updated-docs', listener))
 			}
-			project.off('own-role-change', checkJoined)
+			project.off('own-role-change', onRoleChange)
 			project.off('close', onClose)
 		}
 		return watch
