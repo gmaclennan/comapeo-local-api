@@ -6,7 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { roles, type MapeoManager } from '@comapeo/core'
 
 import { createDevManager } from '../../src/dev/manager.ts'
-import { createLocalApiServer } from '../../src/index.ts'
+import { createServer, type InternalServerOptions } from '../../src/server.ts'
 import { TestClient } from './client.ts'
 import { APP, tempDir } from './server.ts'
 
@@ -35,7 +35,13 @@ async function waitForJoined(manager: MapeoManager, projectId: string) {
  * Two devices on a local connection. `remote` creates a project and invites
  * `local` as a member; `local` serves the API.
  */
-export async function setupPeers(t: TestContext) {
+export async function setupPeers(
+	t: TestContext,
+	{
+		allowEdits,
+		internal,
+	}: { allowEdits?: boolean; internal?: InternalServerOptions } = {},
+) {
 	const remoteDev = await createDevManager({ deviceName: 'Remote device' })
 	const localDev = await createDevManager({ deviceName: 'Local device' })
 	const remote = remoteDev.manager
@@ -72,11 +78,15 @@ export async function setupPeers(t: TestContext) {
 	await waitForJoined(local, projectId)
 
 	const discoveryDir = await tempDir(t)
-	const server = createLocalApiServer({
-		manager: local,
-		discoveryDir,
-		app: APP,
-	})
+	const server = createServer(
+		{
+			manager: local,
+			discoveryDir,
+			app: APP,
+			...(allowEdits && { allowEdits }),
+		},
+		internal,
+	)
 	const { socketPath, discoveryFilePath } = await server.listen()
 	const discovery = JSON.parse(await fs.readFile(discoveryFilePath, 'utf8'))
 	const clients: TestClient[] = []
