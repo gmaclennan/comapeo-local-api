@@ -45,7 +45,7 @@ It prints `READY <discovery file path>` on stdout when the server is listening, 
 
 - `--allow-edits`: start the server with `allowEdits`. Without it, editing is switched off.
 - `--as-member`: a second, in-process device creates the first project, invites the served device as a member, makes most of its observations (the served device makes a few) and syncs with it. `READY` is printed once the served device holds everything.
-- `--edit-delay <ms>`: hold back the reply to each edit by this long, after the edit is written, for testing a client's timeouts.
+- `--edit-delay <ms>`: hold back the reply to each edit by this long, after the edit is written, for testing a client's timeouts. Quitting does not wait for a held reply.
 
 Every project also gets three categories with the kinds of field the default categories lack: "Survey plot" (a number, a date, a multi-choice and a single-choice field with numeric options) and "Well" and "Spring", which are told apart by the `water-source` tag that their shared single-choice field sets, so that changing that field would change the category. Only "Well" has a "Well depth" field. Unless `--observations 0` is given, each of the three also gets an example observation with every field answered, one from each device with `--as-member`, so that a member always has one of its own to edit.
 
