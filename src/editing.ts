@@ -286,6 +286,12 @@ export class Editor {
 					}),
 				)
 			}
+			if (
+				sameTags(value.tags, doc.tags) &&
+				isDeepStrictEqual(value.presetRef, doc.presetRef)
+			) {
+				return { kind: 'done', doc, concurrent: false } as const
+			}
 			value.tags = Object.fromEntries(Object.entries(value.tags))
 			if (!validate('observation', value)) {
 				const first = validate.errors?.[0]
@@ -297,12 +303,6 @@ export class Editor {
 							`${first?.instancePath ?? ''} ${first?.message ?? ''}`.trim(),
 					}),
 				)
-			}
-			if (
-				sameTags(value.tags, doc.tags) &&
-				isDeepStrictEqual(value.presetRef, doc.presetRef)
-			) {
-				return { kind: 'done', doc, concurrent: false } as const
 			}
 
 			const seen = new Set([doc.versionId, ...doc.forks])

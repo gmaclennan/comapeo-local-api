@@ -1238,9 +1238,13 @@ describe('safeguards', () => {
 		// Core's update() does not validate, so it can store what create() refuses
 		const invalid = await project.observation.update(obs.versionId, {
 			...observationValue({ lat: 100, lon: -58 }),
-			tags: obs.tags,
+			tags: { ...obs.tags, notes: 'kept' },
 		})
 		const feature = await getFeature(c, projectId, obs.docId)
+		const unchanged = await update(c, projectId, feature, {
+			properties: { notes: 'kept' },
+		})
+		assert.deepEqual(unchanged, { feature }, 'a request that changes nothing')
 		const err = await rpcError(
 			update(c, projectId, feature, { properties: { notes: 'x' } }),
 		)
