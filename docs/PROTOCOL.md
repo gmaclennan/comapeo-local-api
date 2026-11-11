@@ -85,7 +85,7 @@ Result:
       "geometryType": "Point",
       "schemaVersion": "<changes whenever columns change>",
       "editable": true,
-      "editOperations": ["properties", "category", "move", "delete"],
+      "editOperations": ["properties", "category", "delete"],
       "columns": [
         { "name": "id", "type": "string", "label": "ID", "role": "builtin" },
         {
@@ -213,7 +213,9 @@ Notifications may be batched and delayed by up to a second. Subscriptions end wh
 
 ## Editing
 
-A client can change column values (answers to a category's fields, and notes), change the category, move a point and delete a feature. It cannot create features, change attachments, give a location to a feature that has none or take one away, or edit `tracks`.
+A client can change column values (answers to a category's fields, and notes), change the category and delete a feature. It cannot create features, change attachments, move a point, give a location to a feature that has none or take one away, or edit `tracks`.
+
+Moving a point is described below so that a later server can offer it within version 1 (as the `move` edit operation), but no server offers it yet. Everything in this document about `move`, the `geometry` param of `features.update` and the checks and reasons that concern a geometry applies only to a server that lists `move` in a layer's `editOperations`. Today's server refuses every `geometry` with `NOT_EDITABLE`, as check 4 says.
 
 The server offers editing only when its host starts it with editing allowed (`allowEdits` in the server's options; off unless given). This is fixed for the life of the server: a host that changes its mind closes the server and starts another, and clients reconnect.
 
@@ -225,7 +227,7 @@ The server offers editing only when its host starts it with editing allowed (`al
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | layer `editable`       | `true` when features of this layer can be edited through this connection: the layer supports it, the host allows it, and this device's role lets it edit at least its own features. Absent means `false`.                     |
 | layer `readOnlyReason` | Present when `editable` is `false`: `unsupported` (this layer cannot be edited through the API), `disabled` (the host has not allowed editing) or `role` (this device's role in the project lets it edit nothing).            |
-| layer `editOperations` | The kinds of edit the layer supports: `properties`, `category`, `move`, `delete`. Absent or empty means none. Clients ignore values they do not know and do not attempt a kind that is not listed.                            |
+| layer `editOperations` | The kinds of edit the layer supports: `properties`, `category`, `delete`, and `move` on a later server. Absent or empty means none. Clients ignore values they do not know and do not attempt a kind that is not listed.      |
 | column `editable`      | `true` when the layer supports changing this column's value with `features.update`. Absent means `false`.                                                                                                                     |
 | column `categoryIds`   | On an editable column: the categories whose features can be given a value in it, because the column's field belongs to them. Absent means the column can be changed on any feature, whatever its category (the notes column). |
 | feature `editable`     | In `layers.getFeatures`: `true` when this device's role lets it edit this feature. Absent means `false`.                                                                                                                      |
@@ -252,8 +254,7 @@ Params: `{ projectId, layerId, id, version, forks?, properties?, categoryId?, ge
   "version": "<the version this client last fetched>",
   "forks": [],
   "properties": { "building_type": "clinic", "notes": null },
-  "categoryId": "<categoryId>",
-  "geometry": { "type": "Point", "coordinates": [-58.1002, -3.2001] }
+  "categoryId": "<categoryId>"
 }
 ```
 
@@ -261,14 +262,14 @@ Params: `{ projectId, layerId, id, version, forks?, properties?, categoryId?, ge
 - At least one of `categoryId`, `geometry` and a `properties` with at least one column is required.
 - `properties` holds only the columns to change, by column name. Columns left out are not touched. A client must not send back values it has not changed: what it read was converted to the column's type, and a stored value that did not fit the type reads as `null`.
 - `categoryId` is an entry of `categories.list`. `null` is not accepted: a category cannot be removed.
-- `geometry` is a GeoJSON `Point` with `[lon, lat]` in WGS 84. A third coordinate is ignored. `null` is not accepted.
+- `geometry` is a GeoJSON `Point` with `[lon, lat]` in WGS 84. A third coordinate is ignored. `null` is not accepted. It is for a server that offers `move`; today's server refuses it with `NOT_EDITABLE` (`target: "geometry"`), even when the coordinates are the feature's own.
 - When several are given they are applied as one change, in this order: category, then column values, then position.
 - `lang` is used for the feature in the reply.
 
 Result: `{ "feature": { … }, "concurrent"?: true }`.
 
 - `feature` is the feature as `layers.getFeatures` would now return it, with its new `version` and `forks`. The client replaces its copy with it and needs no further call.
-- Parts of a request that change nothing are ignored: a `categoryId` that is already the feature's `categoryId`, a `geometry` whose coordinates are the feature's own, a column value equal to the one stored. A move to where the point already is does not count as a move. If nothing is left, the server writes nothing and returns the feature as it stands, `version` unchanged.
+- Parts of a request that change nothing are ignored: a `categoryId` that is already the feature's `categoryId`, a column value equal to the one stored, and, on a server that offers `move`, a `geometry` whose coordinates are the feature's own (a move to where the point already is does not count as a move). If nothing is left, the server writes nothing and returns the feature as it stands, `version` unchanged.
 - `concurrent` is explained under [Conflicts](#conflicts).
 
 ### `features.delete`
@@ -314,6 +315,8 @@ One rule covers every update, whether or not it asks for a category: afterwards 
 
 ### Moving a point
 
+Not offered yet: no server lists `move` in `editOperations`, and today's server refuses every `geometry`. This section says what a later server that offers it will do.
+
 The server sets the observation's latitude and longitude, and records the position as entered by hand, the way CoMapeo Mobile records a position that was typed in: `metadata.manualLocation` becomes `true`, `metadata.position` is replaced by the new coordinates and the time of the edit, and `metadata.positionProvider` is dropped. Other metadata is kept.
 
 Because of that the `accuracy` and `altitude` columns of a moved observation read `null`: they described the GPS fix, which no longer describes where the point is. CoMapeo Mobile shows such an observation as "manually entered".
@@ -324,21 +327,22 @@ Only an observation that has a location can be moved. Attachments keep their own
 
 The server makes these checks in this order and answers with the first that fails, so the same request always fails with the same code.
 
-| Order | Code                                   | When                                                                                                                                                                                           | `data`                                                                                                                  |
-| ----- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| 1     | `INVALID_PARAMS`                       | The request is malformed: a required param is missing, `forks` is not an array of strings, `properties` is not an object, `geometry` is not a GeoJSON `Point`, there is nothing to change.     | none                                                                                                                    |
-| 2     | `EDITING_DISABLED`                     | The host has not allowed editing.                                                                                                                                                              | none                                                                                                                    |
-| 3     | `PROJECT_NOT_FOUND`, `LAYER_NOT_FOUND` | As for the reading methods.                                                                                                                                                                    | none                                                                                                                    |
-| 4     | `NOT_EDITABLE`                         | The layer does not support what is asked, whatever this device's role: the layer itself, a column named in `properties` (also a column the layer does not have), or the kind of edit.          | `{ "target": "layer" \| "column" \| "category" \| "geometry" \| "delete", "column"?: "<name>" }`                        |
-| 5     | `FEATURE_NOT_FOUND`                    | The layer has no feature with this id, or it has been deleted.                                                                                                                                 | `{ "deleted": true \| false }`                                                                                          |
-| 6     | `NOT_PERMITTED`                        | This device's role does not allow it to edit this feature.                                                                                                                                     | `{ "reason": "not-own" \| "role" }`                                                                                     |
-| 7     | `CONFLICT`                             | `version` is not the version CoMapeo now shows, or `forks` is not the set of other versions it now holds: the feature changed after the client fetched it.                                     | `{ "feature": { … } }`, the feature as it now stands, in the request's `lang`                                           |
-| 8     | `NOT_EDITABLE`                         | This feature cannot take the change: `geometry` was sent and it has no location, or a column was sent whose field its category (the requested one, when the request changes it) does not have. | `{ "target": "geometry", "reason": "no-location" }` or `{ "target": "column", "column", "reason": "not-in-category" }`  |
-| 9     | `INVALID_VALUE`                        | A value cannot be stored.                                                                                                                                                                      | `{ "target": "column" \| "category" \| "geometry", "column"?: "<name>", "reason": "<see below>", "detail"?: "<text>" }` |
+| Order | Code                                   | When                                                                                                                                                                                                                                  | `data`                                                                                                                  |
+| ----- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 1     | `INVALID_PARAMS`                       | The request is malformed: a required param is missing, `forks` is not an array of strings, `properties` is not an object, `geometry` is not a GeoJSON `Point`, there is nothing to change.                                            | none                                                                                                                    |
+| 2     | `EDITING_DISABLED`                     | The host has not allowed editing.                                                                                                                                                                                                     | none                                                                                                                    |
+| 3     | `PROJECT_NOT_FOUND`, `LAYER_NOT_FOUND` | As for the reading methods.                                                                                                                                                                                                           | none                                                                                                                    |
+| 4     | `NOT_EDITABLE`                         | The layer does not support what is asked, whatever this device's role: the layer itself, a column named in `properties` (also a column the layer does not have), or the kind of edit (a `geometry` sent where `move` is not offered). | `{ "target": "layer" \| "column" \| "category" \| "geometry" \| "delete", "column"?: "<name>" }`                        |
+| 5     | `FEATURE_NOT_FOUND`                    | The layer has no feature with this id, or it has been deleted.                                                                                                                                                                        | `{ "deleted": true \| false }`                                                                                          |
+| 6     | `NOT_PERMITTED`                        | This device's role does not allow it to edit this feature.                                                                                                                                                                            | `{ "reason": "not-own" \| "role" }`                                                                                     |
+| 7     | `CONFLICT`                             | `version` is not the version CoMapeo now shows, or `forks` is not the set of other versions it now holds: the feature changed after the client fetched it.                                                                            | `{ "feature": { … } }`, the feature as it now stands, in the request's `lang`                                           |
+| 8     | `NOT_EDITABLE`                         | This feature cannot take the change: `geometry` was sent and it has no location, or a column was sent whose field its category (the requested one, when the request changes it) does not have.                                        | `{ "target": "geometry", "reason": "no-location" }` or `{ "target": "column", "column", "reason": "not-in-category" }`  |
+| 9     | `INVALID_VALUE`                        | A value cannot be stored.                                                                                                                                                                                                             | `{ "target": "column" \| "category" \| "geometry", "column"?: "<name>", "reason": "<see below>", "detail"?: "<text>" }` |
 
 - Check 4 looks only at what the layer offers (`editOperations` and column `editable`), so its answer is the same for every device. Every refusal that comes from this device's role is `NOT_PERMITTED`.
 - `NOT_PERMITTED` comes before `CONFLICT` so that an edit this device may not make is always answered the same way, whatever version it carries. `reason` is `not-own` when the role allows editing only observations created on this device, and `role` when it allows no editing at all (the layer's `readOnlyReason` is then `role`).
 - `NOT_EDITABLE` carries a `reason` only from check 8. Without one, the layer does not offer the thing at all.
+- Check 4 looks at the layer first, then a `categoryId`, then a `geometry`, then the columns in `properties`; the first that is not offered is the one reported. The `geometry` cases of checks 8 and 9 (`no-location`, `out-of-range`) arise only on a server that offers `move`.
 - `INVALID_VALUE` reasons: `type` (not a value of the column's type), `not-an-option` (the column has options and the value is not one), `format` (not a date in one of the forms accepted), `out-of-range` (longitude outside −180 to 180 or latitude outside −90 to 90), `unknown-category`, `category-not-for-layer`, `category-would-not-show` (the category asked for would not be the one shown), `would-change-category` (a column value would change the category shown; `column` names it when one column alone is responsible), and `schema` (CoMapeo's own check of the whole observation refused it; `detail` says why). When several values are bad the server reports one of them. Clients treat a reason they do not know as a general refusal.
 - A refused edit changes nothing. After `CONFLICT` the client replaces its copy with `data.feature`; after `FEATURE_NOT_FOUND` it removes the feature. After the others its copy is still right.
 - For `features.delete`, checks 8 and 9 do not apply.
@@ -351,7 +355,7 @@ This API must not write over a change the client has not seen, and must not fork
 
 - It applies edits to a project one at a time, across all connections.
 - For each edit it reads the feature as CoMapeo now holds it, and refuses with `CONFLICT` unless the version shown is the `version` the client sent and the other versions are exactly the `forks` the client sent. It then writes without waiting on anything else of its own.
-- An observation that the client knew to be forked can be edited. The edit is written on top of every version the client listed, which ends the fork: the version shown, with the change, becomes the only one, and the others remain in the document's history. A delete does the same. A client should tell the user, before saving, that the feature has other versions and that saving keeps the one shown.
+- An observation that the client knew to be forked can be edited. An update is written on top of the version shown only, as CoMapeo Desktop does; the other versions are not merged into it and are left as they are. The reply's `forks` says which of them CoMapeo still lists. A delete goes through CoMapeo's own delete, which covers every version.
 
 What it cannot do:
 
@@ -389,4 +393,4 @@ Added so far within version 1: `features.update` and `features.delete`; the six 
 
 ## Not offered yet
 
-Creating features, changing attachments, editing tracks, and giving a location to an observation that has none. Each could be added within version 1, as a new method or a new `editOperations` value.
+Creating features, changing attachments, editing tracks, moving a point (see [Moving a point](#moving-a-point)), and giving a location to an observation that has none. Each could be added within version 1, as a new method or a new `editOperations` value.
