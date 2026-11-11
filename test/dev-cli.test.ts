@@ -291,6 +291,32 @@ test('dev command as a member, with editing: the other device, roles and forks',
 	assert.equal(columns.get('water_source').categoryIds.length, 2)
 	assert.equal(columns.get('well_depth').categoryIds.length, 1)
 
+	const { features: all } = await client.request('layers.getFeatures', {
+		projectId,
+		layerId: 'observations',
+	})
+	const { categories } = await client.request('categories.list', {
+		projectId,
+	})
+	for (const name of ['Survey plot', 'Well', 'Spring']) {
+		const { categoryId } = categories.find((c: Wire) => c.name === name)
+		const inCategory = all.filter((f: Wire) => f.categoryId === categoryId)
+		assert.ok(
+			inCategory.some((f: Wire) => f.editable),
+			`the member has its own ${name}`,
+		)
+		assert.ok(
+			inCategory.some((f: Wire) => !f.editable),
+			`the other device has a ${name}`,
+		)
+	}
+	const survey = all.find(
+		(f: Wire) => f.properties.notes === 'An example Survey plot' && f.editable,
+	)
+	assert.deepEqual(survey.properties.threats, ['fire', 'logging'])
+	assert.equal(survey.properties.plot_quality, 2)
+	assert.equal(survey.properties.visit_date, '2026-03-01')
+
 	const { ids: own } = await command('list own 2')
 	const { ids: other } = await command('list other 2')
 	const { ids: noLocation } = await command('list nolocation 1')

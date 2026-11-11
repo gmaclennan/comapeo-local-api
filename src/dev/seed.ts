@@ -262,6 +262,50 @@ export async function addEditingCategories(project: MapeoProject) {
 	await category('Spring', { 'water-source': 'spring' }, [source], '#8AC926')
 }
 
+const EDITING_EXAMPLES: Array<{ name: string; tags: Observation['tags'] }> = [
+	{
+		name: 'Survey plot',
+		tags: {
+			'plot-area': 2.5,
+			'visit-date': '2026-03-01',
+			threats: ['fire', 'logging'],
+			'plot-quality': 2,
+		},
+	},
+	{ name: 'Well', tags: { 'well-depth': 12 } },
+	{ name: 'Spring', tags: {} },
+]
+
+/**
+ * One observation in each category from `addEditingCategories`, with every
+ * field answered, so that there is always one of each to edit.
+ */
+export async function addEditingObservations(
+	project: MapeoProject,
+	random: Random,
+) {
+	const presets = (await project.preset.getMany()) as PresetDoc[]
+	for (const { name, tags } of EDITING_EXAMPLES) {
+		const preset = presets.find((p) => p.name === name)
+		if (!preset) throw new Error(`No category named ${name}`)
+		const settlement = pick(random, SETTLEMENTS)
+		const timestamp = new Date(Date.now() - random() * 30 * 864e5).toISOString()
+		await project.observation.create({
+			schemaName: 'observation',
+			lat: Number((settlement.lat + gaussian(random) * 0.02).toFixed(6)),
+			lon: Number((settlement.lon + gaussian(random) * 0.02).toFixed(6)),
+			tags: { ...preset.tags, ...tags, notes: `An example ${name}` },
+			attachments: [],
+			presetRef: { docId: preset.docId, versionId: preset.versionId },
+			metadata: {
+				manualLocation: false,
+				position: position(settlement.lon, settlement.lat, random, timestamp),
+			},
+		})
+	}
+	return EDITING_EXAMPLES.length
+}
+
 export interface SeedOptions {
 	observations: number
 	tracks: number

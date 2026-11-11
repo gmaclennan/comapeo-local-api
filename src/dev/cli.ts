@@ -12,7 +12,12 @@ import { createServer } from '../server.ts'
 import { DevCommands, type DevProject } from './commands.ts'
 import { createDevManager, type DevManager } from './manager.ts'
 import { connectPeers, joinAsMember, until } from './peers.ts'
-import { addEditingCategories, seedProject } from './seed.ts'
+import {
+	addEditingCategories,
+	addEditingObservations,
+	createRandom,
+	seedProject,
+} from './seed.ts'
 
 const USAGE = `Usage: node src/dev/cli.ts [options]
 
@@ -167,6 +172,9 @@ async function main() {
 					seed: seed + i,
 					mediaDir,
 				})
+				if (spec.observations > 0) {
+					await addEditingObservations(created, createRandom(seed + i))
+				}
 				log(`  ${projectId}: ${JSON.stringify(summary)}`)
 				projects.push({ projectId, project: created })
 				continue
@@ -195,6 +203,11 @@ async function main() {
 					mediaDir,
 				}),
 			]
+			if (spec.observations > 0) {
+				// The served device, as a member, can edit only these
+				await addEditingObservations(created, createRandom(seed + i))
+				await addEditingObservations(project, createRandom(seed + i + 1000))
+			}
 			log(`  ${projectId}: ${JSON.stringify(summaries)}`)
 			await untilSynced(created, project)
 			projects.push({ projectId, project, remote: created })

@@ -245,11 +245,16 @@ export class DevCommands {
 			}
 			case 'fork-prepare': {
 				const doc = await this.#pick(project, args[0], this.#own(project))
-				const remoteDoc = (await remote.observation.getByDocId(
-					doc.docId,
-				)) as ObservationDoc
+				// Both must start from the same version for the two changes to fork
+				const remoteDoc = await until(async () => {
+					const d = (await remote.observation.getByDocId(doc.docId, {
+						mustBeFound: false,
+					})) as ObservationDoc | null
+					return d?.versionId === doc.versionId && d
+				}, 'the other device to hold the served device’s version')
 				project.$sync.stop()
 				remote.$sync.stop()
+				await delay(200)
 				const theirs = (await remote.observation.update(
 					remoteDoc.versionId,
 					withNotes(remoteDoc, 'Changed on the other device, earlier'),
