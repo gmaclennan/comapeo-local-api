@@ -94,7 +94,7 @@
 	"dependencies": {
 		"@mapeo/default-config": "^6.0.0",
 		"custom-error-creator": "^1.4.0",
-		"fastify": "^4.29.1",
+		"fastify": "^5.12.8",
 		"jpeg-js": "^0.4.4"
 	},
 	"overrides": {
