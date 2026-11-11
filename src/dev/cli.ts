@@ -132,10 +132,14 @@ async function main() {
 		if (gaveUp) {
 			if (discoveryFilePath) await removeOwnDiscoveryFile(discoveryFilePath)
 			for (const d of [dev, remoteDev]) {
-				if (d) await fs.rm(d.storageDir, { recursive: true, force: true })
+				if (d) {
+					await fs
+						.rm(d.storageDir, { recursive: true, force: true })
+						.catch(() => {})
+				}
 			}
 		}
-		await fs.rm(mediaDir, { recursive: true, force: true })
+		await fs.rm(mediaDir, { recursive: true, force: true }).catch(() => {})
 		process.exit(code)
 	}
 	process.once('SIGINT', () => stop(0))
