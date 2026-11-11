@@ -2,15 +2,16 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
 import type { MapeoProject } from '@comapeo/core'
-import type { FieldValue } from '@comapeo/core/schema.js'
+import type { FieldValue, ObservationValue } from '@comapeo/core/schema.js'
 
+import { addAudio, addPhoto } from '../src/dev/seed.ts'
 import { RpcError, type TestClient, type Wire } from './helpers/client.ts'
 import {
 	observationValue,
 	presetByName,
 	trackValue,
 } from './helpers/fixtures.ts'
-import { setup } from './helpers/server.ts'
+import { setup, tempDir } from './helpers/server.ts'
 
 async function rpcError(promise: Promise<unknown>): Promise<RpcError> {
 	const err = await promise.then(
@@ -51,13 +52,22 @@ async function inCategory(
 	project: MapeoProject,
 	name: string,
 	tags: Record<string, string | number> = {},
-	{ lat = -3, lon = -58 }: { lat?: number; lon?: number } = {},
+	{
+		lat = -3,
+		lon = -58,
+		attachments = [],
+	}: {
+		lat?: number
+		lon?: number
+		attachments?: ObservationValue['attachments']
+	} = {},
 ) {
 	const preset = await presetByName(project, name)
 	return project.observation.create(
 		observationValue({
 			lat,
 			lon,
+			attachments,
 			tags: { ...preset.tags, ...tags },
 			presetRef: { docId: preset.docId, versionId: preset.versionId },
 			metadata: {
@@ -301,7 +311,17 @@ describe('features.update', () => {
 	test('notes: trimmed, a value equal to the stored one writes nothing, null removes', async (t) => {
 		const { client, projectId, project } = await setup(t, { allowEdits: true })
 		const c = await client()
-		const obs = await inCategory(project, 'Tree', { notes: 'first' })
+		const mediaDir = await tempDir(t)
+		const attachments = [
+			await addPhoto(project, mediaDir, 1),
+			await addAudio(project, mediaDir, 2),
+		]
+		const obs = await inCategory(
+			project,
+			'Tree',
+			{ notes: 'first' },
+			{ attachments },
+		)
 		const before = await getFeature(c, projectId, obs.docId)
 		assert.equal(before.properties.notes, 'first')
 
@@ -318,7 +338,9 @@ describe('features.update', () => {
 		assert.equal(stored.lat, obs.lat)
 		assert.deepEqual(stored.metadata, obs.metadata)
 		assert.deepEqual(stored.presetRef, obs.presetRef)
-		assert.deepEqual(stored.attachments, obs.attachments)
+		assert.deepEqual(stored.attachments, attachments)
+		assert.deepEqual(feature.attachments, before.attachments)
+		assert.equal(feature.attachments.length, 2)
 
 		const same = await update(c, projectId, feature, {
 			properties: { notes: 'second' },
@@ -902,6 +924,37 @@ describe('conflicts', () => {
 		assert.equal(accepted.length, 1)
 		assert.equal(refused.length, 1)
 		assert.equal((refused[0] as PromiseRejectedResult).reason.code, 'CONFLICT')
+		const now = await project.observation.getByDocId(feature.id)
+		assert.deepEqual(now.forks, [])
+	})
+
+	test('two connections, an update and a delete of the same version: one is accepted, the other refused', async (t) => {
+		const { client, projectId, project } = await setup(t, { allowEdits: true })
+		const [a, b] = await Promise.all([client(), client()])
+		const feature = await getFeature(
+			a,
+			projectId,
+			(await inCategory(project, 'Tree')).docId,
+		)
+		const results = await Promise.allSettled([
+			update(a, projectId, feature, { properties: { notes: 'a' } }),
+			b.request('features.delete', {
+				projectId,
+				layerId: 'observations',
+				id: feature.id,
+				version: feature.version,
+				forks: feature.forks,
+			}),
+		])
+		const accepted = results.filter((r) => r.status === 'fulfilled')
+		const refused = results.filter((r) => r.status === 'rejected')
+		assert.equal(accepted.length, 1)
+		assert.equal(refused.length, 1)
+		assert.ok(
+			['CONFLICT', 'FEATURE_NOT_FOUND'].includes(
+				(refused[0] as PromiseRejectedResult).reason.code,
+			),
+		)
 		const now = await project.observation.getByDocId(feature.id)
 		assert.deepEqual(now.forks, [])
 	})

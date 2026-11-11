@@ -353,6 +353,7 @@ test('dev command as a member, with editing: the other device, roles and forks',
 
 	await client.request('subscribe', { projectId })
 	await command('role coordinator')
+	assert.equal((await feature(other[0])).editable, true, 'as soon as OK')
 	await client.waitForNotification(
 		(n) => n.method === 'layer.schemaChanged',
 		5000,
@@ -382,6 +383,7 @@ test('dev command as a member, with editing: the other device, roles and forks',
 	})
 	assert.deepEqual(removed, [other[1]])
 	await command('role member')
+	assert.equal((await feature(other[0])).editable, false, 'as soon as OK')
 
 	child.stdin.write('quit\n')
 	const [code] = await once(child, 'exit')
