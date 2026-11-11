@@ -346,7 +346,12 @@ export class Editor {
 				}
 				throw err
 			}
-			const concurrent = (deleted.links ?? []).some((v) => !seen.has(v))
+			// delete() returns the version CoMapeo now shows: a write that overlapped it can win
+			const concurrent =
+				!deleted.deleted ||
+				[...(deleted.links ?? []), ...(deleted as Head).forks].some(
+					(v) => !seen.has(v),
+				)
 			return { kind: 'done', doc: deleted, concurrent } as const
 		})
 		if (outcome.kind === 'refused') throw outcome.error

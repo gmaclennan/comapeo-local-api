@@ -276,7 +276,7 @@ Result: `{ "feature": { … }, "concurrent"?: true }`.
 
 Params: `{ projectId, layerId, id, version, forks? }`, with `version` and `forks` as for `features.update`.
 
-Result: `{ "id": "<docId>", "concurrent"?: true }`. The client removes the feature. Deleting does not touch tracks that refer to the observation, as in CoMapeo Desktop.
+Result: `{ "id": "<docId>", "concurrent"?: true }`. The client removes the feature, unless `concurrent` is set (see [Conflicts](#conflicts)). Deleting does not touch tracks that refer to the observation, as in CoMapeo Desktop.
 
 ### Column values
 
@@ -360,7 +360,7 @@ This API must not write over a change the client has not seen, and must not fork
 What it cannot do:
 
 - The check is against what this device has received. A change made on another device that has not yet reached this one cannot be seen. When it arrives, CoMapeo keeps both versions and shows the later one, as for any two devices that edit while apart. The client hears of it through `layer.changed`.
-- CoMapeo offers no way to check and write in one step, so a change from another device, or one made in CoMapeo itself on this device, can land in the few milliseconds between the server's check and its write. The server looks for this after writing and reports it with `"concurrent": true` in the result. For an update, both versions are kept, and `feature` is the one CoMapeo now shows, with the other in its `forks`; the one shown is whichever was saved later, normally the client's. For a delete, the deletion stands and covers the change that landed. In neither case can the write be withdrawn. A client tells the user that another change was made at the same moment.
+- CoMapeo offers no way to check and write in one step, so a change from another device, or one made in CoMapeo itself on this device, can land in the few milliseconds between the server's check and its write. The server looks for this after writing and reports it with `"concurrent": true` in the result. For an update, both versions are kept, and `feature` is the one CoMapeo now shows, with the other in its `forks`; the one shown is whichever was saved later, normally the client's. If what landed was a deletion, the update brings the observation back and the deletion is listed in its `forks`. For a delete, a change that landed before CoMapeo's own delete began is covered by the deletion, but one that overlapped it is kept beside it and may be the version shown, so the observation may still be there. In no case can the write be withdrawn. When `concurrent` is set, on an update or a delete, the client fetches the feature again by id rather than trusting the result, and tells the user that another change was made at the same moment.
 
 ### Many edits at once
 

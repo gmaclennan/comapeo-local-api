@@ -1011,6 +1011,97 @@ describe('the gap between check and write', () => {
 		assert.equal(err.code, 'FEATURE_NOT_FOUND')
 		assert.deepEqual(err.data, { deleted: true })
 	})
+
+	test('an update in the gap after a delete there: the observation is shown again, the deletion in its forks', async (t) => {
+		const gap: { intrude?: () => Promise<unknown> } = {}
+		const { client, projectId, project } = await setup(t, {
+			allowEdits: true,
+			internal: { beforeWrite: async () => void (await gap.intrude?.()) },
+		})
+		const c = await client()
+		const obs = await inCategory(project, 'Tree')
+		const feature = await getFeature(c, projectId, obs.docId)
+		let deleted: { versionId: string } | undefined
+		gap.intrude = async () => {
+			deleted = await project.observation.delete(obs.docId)
+		}
+		const result = await update(c, projectId, feature, {
+			properties: { notes: 'from QGIS' },
+		})
+		assert.equal(result.concurrent, true)
+		assert.equal(result.feature.properties.notes, 'from QGIS')
+		assert.ok(deleted && result.feature.forks.includes(deleted.versionId))
+		assert.deepEqual(await getFeature(c, projectId, obs.docId), result.feature)
+	})
+
+	// The other write is started, not awaited, so it overlaps core's own write
+	for (const [ours, theirs] of [
+		['delete', 'update'],
+		['update', 'update'],
+		['update', 'delete'],
+	] as const) {
+		const name = { update: 'an update', delete: 'a delete' }
+		test(`${name[theirs]} overlapping core's own ${ours} is reported as concurrent`, async (t) => {
+			let intrude: (() => Promise<unknown>) | undefined
+			const { client, projectId, project } = await setup(t, {
+				allowEdits: true,
+				internal: { beforeWrite: async () => void (await intrude?.()) },
+			})
+			const c = await client()
+			let overlaps = 0
+			for (const startsFirst of [true, false]) {
+				for (let ticks = 0; ticks < 10; ticks++) {
+					const obs = await inCategory(project, 'Tree')
+					const feature = await getFeature(c, projectId, obs.docId)
+					const write = () =>
+						theirs === 'delete'
+							? project.observation.delete(obs.docId)
+							: project.observation.update(obs.versionId, {
+									...observationValue({ lat: -3, lon: -58 }),
+									tags: { ...obs.tags, notes: 'from CoMapeo' },
+								})
+					const pause = async () => {
+						for (let i = 0; i < ticks; i++) await Promise.resolve()
+					}
+					let other: Promise<unknown> = Promise.resolve()
+					intrude = async () => {
+						if (startsFirst) {
+							other = write()
+							await pause()
+						} else {
+							other = pause().then(write)
+						}
+					}
+					const reply =
+						ours === 'delete'
+							? await c.request('features.delete', {
+									projectId,
+									layerId: 'observations',
+									id: feature.id,
+									version: feature.version,
+									forks: feature.forks,
+								})
+							: await update(c, projectId, feature, {
+									properties: { notes: 'from QGIS' },
+								})
+					await other
+					const stored = await project.observation.getByDocId(obs.docId)
+					if (stored.forks.length === 0) continue
+					overlaps++
+					const when = `${startsFirst ? 'before' : 'after'}, ${ticks} ticks`
+					assert.equal(reply.concurrent, true, when)
+					if (ours === 'update' && !stored.deleted) {
+						assert.deepEqual(
+							reply.feature,
+							await getFeature(c, projectId, obs.docId),
+							when,
+						)
+					}
+				}
+			}
+			assert.ok(overlaps > 0, 'the writes overlapped')
+		})
+	}
 })
 
 describe('features.delete', () => {
