@@ -222,6 +222,7 @@ describe('conflicts between devices', () => {
 
 			localProject.$sync.stop()
 			remoteProject.$sync.stop()
+			await delay(200)
 			const theirs = await remoteProject.observation.update(
 				v1.versionId,
 				value('remote, earlier'),

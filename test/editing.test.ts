@@ -1085,3 +1085,64 @@ describe('speed', () => {
 		assert.ok(ms < 15_000, `${ms} ms`)
 	})
 })
+
+describe('safeguards', () => {
+	test('a value CoMapeo would not accept is refused by its own check, and nothing is written', async (t) => {
+		const { client, projectId, project } = await setup(t, { allowEdits: true })
+		const c = await client()
+		const obs = await inCategory(project, 'Tree')
+		// Core's update() does not validate, so it can store what create() refuses
+		const invalid = await project.observation.update(obs.versionId, {
+			...observationValue({ lat: 100, lon: -58 }),
+			tags: obs.tags,
+		})
+		const feature = await getFeature(c, projectId, obs.docId)
+		const err = await rpcError(
+			update(c, projectId, feature, { properties: { notes: 'x' } }),
+		)
+		assert.equal(err.code, 'INVALID_VALUE')
+		const data = err.data as Wire
+		assert.equal(data.target, 'column')
+		assert.equal(data.reason, 'schema')
+		assert.match(data.detail, /lat/)
+		assert.equal(
+			(await project.observation.getByDocId(obs.docId)).versionId,
+			invalid.versionId,
+		)
+	})
+
+	test('editing keeps one updated-docs listener per data type, and close removes it', async (t) => {
+		const { client, projectId, project, server } = await setup(t, {
+			allowEdits: true,
+		})
+		const dataTypes = [
+			project.observation,
+			project.track,
+			project.preset,
+			project.field,
+			project.$translation.dataType,
+		]
+		const counts = () => dataTypes.map((d) => d.listenerCount('updated-docs'))
+		const before = counts()
+		const plusOne = before.map((n) => n + 1)
+		const [a, b] = await Promise.all([client(), client()])
+		const obs = await inCategory(project, 'Tree')
+		let feature = await getFeature(a, projectId, obs.docId)
+		;({ feature } = await update(a, projectId, feature, {
+			properties: { notes: 'no subscriber' },
+		}))
+		assert.deepEqual(counts(), plusOne)
+		await a.request('subscribe', { projectId })
+		await b.request('subscribe', { projectId })
+		;({ feature } = await update(b, projectId, feature, {
+			properties: { notes: 'two subscribers' },
+		}))
+		assert.deepEqual(counts(), plusOne)
+		await a.request('unsubscribe', { projectId })
+		await b.close()
+		await update(a, projectId, feature, { properties: { notes: 'none again' } })
+		assert.deepEqual(counts(), plusOne)
+		await server.close()
+		assert.deepEqual(counts(), before)
+	})
+})
