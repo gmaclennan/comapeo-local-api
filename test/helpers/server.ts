@@ -4,7 +4,7 @@ import * as path from 'node:path'
 import type { TestContext } from 'node:test'
 
 import { createDevManager } from '../../src/dev/manager.ts'
-import { createLocalApiServer } from '../../src/index.ts'
+import { createServer, type InternalServerOptions } from '../../src/server.ts'
 import { TestClient } from './client.ts'
 
 export const APP = { name: 'Test App', version: '9.9.9' }
@@ -15,13 +15,22 @@ export async function tempDir(t: TestContext): Promise<string> {
 	return dir
 }
 
-export async function setup(t: TestContext) {
+export async function setup(
+	t: TestContext,
+	{
+		allowEdits,
+		internal,
+	}: { allowEdits?: boolean; internal?: InternalServerOptions } = {},
+) {
 	const dev = await createDevManager({ deviceName: 'Test device' })
 	const { manager } = dev
 	const projectId = await manager.createProject({ name: 'Test project' })
 	const project = await manager.getProject(projectId)
 	const discoveryDir = await tempDir(t)
-	const server = createLocalApiServer({ manager, discoveryDir, app: APP })
+	const server = createServer(
+		{ manager, discoveryDir, app: APP, ...(allowEdits && { allowEdits }) },
+		internal,
+	)
 	const { socketPath, discoveryFilePath } = await server.listen()
 	t.after(async () => {
 		await server.close()

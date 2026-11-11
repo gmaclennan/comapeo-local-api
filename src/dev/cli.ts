@@ -3,12 +3,21 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import * as readline from 'node:readline'
+import { setTimeout as delay } from 'node:timers/promises'
 import { parseArgs } from 'node:util'
 
-import { createLocalApiServer } from '../server.ts'
-import { DevCommands } from './commands.ts'
-import { createDevManager } from './manager.ts'
-import { seedProject } from './seed.ts'
+import type { MapeoProject } from '@comapeo/core'
+
+import { createServer } from '../server.ts'
+import { DevCommands, type DevProject } from './commands.ts'
+import { createDevManager, type DevManager } from './manager.ts'
+import { connectPeers, joinAsMember, until } from './peers.ts'
+import {
+	addEditingCategories,
+	addEditingObservations,
+	createRandom,
+	seedProject,
+} from './seed.ts'
 
 const USAGE = `Usage: node src/dev/cli.ts [options]
 
@@ -23,6 +32,11 @@ Options:
   --photos <n>            photos in the first project (default 40)
   --projects <1|2>        number of projects (default 2)
   --seed <n>              random seed (default 1)
+  --allow-edits           let clients edit (the server's allowEdits)
+  --as-member             serve as a member of the first project, which a
+                          second, in-process device creates and mostly fills,
+                          and with which it syncs
+  --edit-delay <ms>       hold back each edit's reply by this long
   --help
 
 While running, type "help" on stdin for commands that change data, or
@@ -49,6 +63,9 @@ async function main() {
 			photos: { type: 'string' },
 			projects: { type: 'string' },
 			seed: { type: 'string' },
+			'allow-edits': { type: 'boolean' },
+			'as-member': { type: 'boolean' },
+			'edit-delay': { type: 'string' },
 			help: { type: 'boolean' },
 		},
 	})
@@ -71,23 +88,58 @@ async function main() {
 		photos: count(values.photos, 'photos', 40),
 	}
 
+	const asMember = values['as-member'] === true
+	const editReplyDelayMs = count(values['edit-delay'], 'edit-delay', 0)
+
 	const dev = await createDevManager({ deviceName: 'CoMapeo dev server' })
+	const remoteDev: DevManager | null = asMember
+		? await createDevManager({
+				deviceName: 'CoMapeo dev remote device',
+				startMediaServer: false,
+			})
+		: null
+	let disconnect: (() => Promise<void>) | null = null
 	const mediaDir = await fs.mkdtemp(
 		path.join(os.tmpdir(), 'comapeo-dev-media-'),
 	)
-	const server = createLocalApiServer({
-		manager: dev.manager,
-		discoveryDir,
-		app: { name: 'CoMapeo local API dev server', version: '0.0.0-dev' },
-	})
+	const server = createServer(
+		{
+			manager: dev.manager,
+			discoveryDir,
+			app: { name: 'CoMapeo local API dev server', version: '0.0.0-dev' },
+			allowEdits: values['allow-edits'] === true,
+		},
+		{ editReplyDelayMs },
+	)
 
+	let discoveryFilePath: string | null = null
 	let stopping = false
 	const stop = async (code: number) => {
 		if (stopping) return
 		stopping = true
-		await server.close().catch(() => {})
-		await dev.close().catch(() => {})
-		await fs.rm(mediaDir, { recursive: true, force: true })
+		// Closing two syncing managers has been seen to hang; never wait for ever
+		const gaveUp = await Promise.race([
+			(async () => {
+				await server.close().catch(() => {})
+				await disconnect?.().catch(() => {})
+				await Promise.all(
+					[dev, remoteDev].map((d) => d?.close().catch(() => {})),
+				)
+				return false
+			})(),
+			delay(5000, true),
+		])
+		if (gaveUp) {
+			if (discoveryFilePath) await removeOwnDiscoveryFile(discoveryFilePath)
+			for (const d of [dev, remoteDev]) {
+				if (d) {
+					await fs
+						.rm(d.storageDir, { recursive: true, force: true })
+						.catch(() => {})
+				}
+			}
+		}
+		await fs.rm(mediaDir, { recursive: true, force: true }).catch(() => {})
 		process.exit(code)
 	}
 	process.once('SIGINT', () => stop(0))
@@ -113,52 +165,128 @@ async function main() {
 			},
 		].slice(0, projectCount)
 
-		const projects = []
+		const projects: DevProject[] = []
 		for (const [i, spec] of specs.entries()) {
 			const { name, projectColor, projectDescription } = spec
-			const projectId = await dev.manager.createProject({
+			const shared = remoteDev !== null && i === 0
+			const creator = shared ? remoteDev.manager : dev.manager
+			const projectId = await creator.createProject({
 				name,
 				projectColor,
 				projectDescription,
 			})
-			const project = await dev.manager.getProject(projectId)
+			const created = await creator.getProject(projectId)
+			await addEditingCategories(created)
 			log(`Seeding "${name}"…`)
-			const summary = await seedProject(project, {
-				...spec,
-				seed: seed + i,
-				mediaDir,
-			})
-			log(`  ${projectId}: ${JSON.stringify(summary)}`)
-			projects.push({ projectId, project })
+			if (!shared) {
+				const summary = await seedProject(created, {
+					...spec,
+					seed: seed + i,
+					mediaDir,
+				})
+				if (spec.observations > 0) {
+					await addEditingObservations(created, createRandom(seed + i))
+				}
+				log(`  ${projectId}: ${JSON.stringify(summary)}`)
+				projects.push({ projectId, project: created })
+				continue
+			}
+			disconnect = await connectPeers(creator, dev.manager)
+			const project = await joinAsMember(created, dev.manager, projectId)
+			// The served device needs the categories before it can make observations
+			await untilSynced(created, project)
+			const own = Math.min(
+				spec.observations,
+				Math.max(5, spec.observations / 10),
+			)
+			const summaries = [
+				await seedProject(created, {
+					...spec,
+					observations: spec.observations - Math.ceil(own),
+					seed: seed + i,
+					mediaDir,
+				}),
+				await seedProject(project, {
+					observations: Math.ceil(own),
+					tracks: 0,
+					photos: 0,
+					audio: 0,
+					seed: seed + i + 1000,
+					mediaDir,
+				}),
+			]
+			if (spec.observations > 0) {
+				// The served device, as a member, can edit only these
+				await addEditingObservations(created, createRandom(seed + i))
+				await addEditingObservations(project, createRandom(seed + i + 1000))
+			}
+			log(`  ${projectId}: ${JSON.stringify(summaries)}`)
+			await untilSynced(created, project)
+			projects.push({ projectId, project, remote: created })
 		}
 
-		const { discoveryFilePath } = await server.listen()
+		;({ discoveryFilePath } = await server.listen())
 		console.log(`READY ${discoveryFilePath}`)
 
 		const commands = new DevCommands(projects, seed)
 		const rl = readline.createInterface({ input: process.stdin })
-		rl.on('line', (line) => {
+		// One command at a time, in the order typed, so that each OK follows the last
+		let queue = Promise.resolve()
+		const handle = async (line: string) => {
 			if (line.trim() === 'help') {
 				log(DevCommands.HELP)
 				return
 			}
 			if (line.trim() === 'quit') {
-				void stop(0)
+				await stop(0)
 				return
 			}
-			commands.run(line).then(
-				(result) => result && console.log(`OK ${JSON.stringify(result)}`),
-				(err: unknown) =>
-					console.log(
-						`ERROR ${err instanceof Error ? err.message : String(err)}`,
-					),
-			)
+			try {
+				const result = await commands.run(line)
+				if (result) console.log(`OK ${JSON.stringify(result)}`)
+			} catch (err) {
+				console.log(`ERROR ${err instanceof Error ? err.message : String(err)}`)
+			}
+		}
+		rl.on('line', (line) => {
+			queue = queue.then(() => handle(line))
 		})
 		log('Type "help" for commands that change data; Ctrl-C to stop.')
 	} catch (err) {
 		log(err instanceof Error ? (err.stack ?? err.message) : String(err))
 		await stop(1)
 	}
+}
+
+/** Removes the discovery file unless another server has since written its own there. */
+async function removeOwnDiscoveryFile(filePath: string) {
+	try {
+		const { pid } = JSON.parse(await fs.readFile(filePath, 'utf8')) as {
+			pid?: unknown
+		}
+		if (pid === process.pid) await fs.rm(filePath, { force: true })
+	} catch {
+		// Already gone or unreadable: nothing of ours to remove
+	}
+}
+
+/** Resolves once both devices hold the same observations, categories and fields. */
+async function untilSynced(a: MapeoProject, b: MapeoProject) {
+	const state = async (p: MapeoProject) =>
+		JSON.stringify(
+			(
+				await Promise.all([
+					p.observation.getMany(),
+					p.preset.getMany(),
+					p.field.getMany(),
+				])
+			).map((docs) => docs.map((d) => d.versionId).sort()),
+		)
+	await until(
+		async () => (await state(a)) === (await state(b)),
+		'the two devices to sync',
+		120_000,
+	)
 }
 
 main().catch((err: unknown) => {

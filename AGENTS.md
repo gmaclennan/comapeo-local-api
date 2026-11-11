@@ -12,11 +12,11 @@ npm run format      # prettier
 npm run dev -- --discovery-dir <dir>   # dev server with generated projects
 ```
 
-`docs/PROTOCOL.md` is the wire contract and the source of truth; change its meaning only by adding a protocol version.
+`docs/PROTOCOL.md` is the wire contract and the source of truth. Change it only by adding a protocol version, or by an addition its "Changes within a version" section allows; record such additions in that section's list.
 
 ## Layout
 
-`src/server.ts` (sockets, handshake, dispatch), `src/project-data.ts` (reads from `MapeoManager`), `src/columns.ts`, `src/categories.ts`, `src/subscriptions.ts`, `src/discovery.ts`. `src/dev/` holds the dev command and the generated test data; tests reuse `src/dev/manager.ts` for a real in-memory `MapeoManager` with a listening media server. `src/dev/` is left out of `dist/` and the published package, so anything only it imports (Fastify, `jpeg-js`, `@mapeo/default-config`) is a dev dependency; desktop installs only `dependencies`.
+`src/server.ts` (sockets, handshake, dispatch), `src/project-data.ts` (reads from `MapeoManager`), `src/editing.ts` (the write path of `features.update` and `features.delete`), `src/columns.ts`, `src/categories.ts`, `src/subscriptions.ts`, `src/discovery.ts`. `src/dev/` holds the dev command and the generated test data; tests reuse `src/dev/manager.ts` for a real in-memory `MapeoManager` with a listening media server, and `src/dev/peers.ts` for two synced devices. `src/dev/` is left out of `dist/` and the published package, so anything only it imports (Fastify, `jpeg-js`, `@mapeo/default-config`) is a dev dependency; desktop installs only `dependencies`.
 
 ## Gotchas
 
@@ -31,6 +31,12 @@ npm run dev -- --discovery-dir <dir>   # dev server with generated projects
 - Tags and properties are read with `Object.hasOwn` and built on `Object.create(null)`, because tag keys such as `constructor` or `__proto__` can occur.
 - `Observation`, `Preset` etc. from `@comapeo/core/schema.js` are full documents; use `ObservationValue` and friends for values passed to `create()`.
 - Unix socket paths must stay under 100 bytes.
+- Core gives editing no help: `update()` never refuses a stale version (it forks), does not validate the value, and treats `deleted: true` in it as a delete; neither `update()` nor `delete()` checks the role. So `src/editing.ts` runs edits one at a time per project, builds the value from a whitelist of the head's members, validates it with `validate` from `@comapeo/core/schema.js`, checks the role and the version and forks itself, and awaits nothing between reading the head and calling core. Keep it that way; core's own awaits inside `update()` and `delete()` leave a gap that is reported as `concurrent`, not closed. Both return the version CoMapeo then shows, which after an overlapping write may be the other one: judge `concurrent` from its `deleted`, `links` and `forks` against the versions checked, as `test/editing.test.ts` does with a write started but not awaited in `beforeWrite`.
+- Updates link the shown version only (`update(head.versionId)`), as Desktop does; `delete()` links every version itself.
+- The edit path caches categories and columns per project (measured: about six times faster per edit). It keeps the project's subscription watch alive (`Subscriptions.hold`) so that the one `updated-docs` listener per DataType drops the cache when categories, fields or translations change.
+- `createServer(options, internal)` in `src/server.ts` takes test seams (`beforeWrite`, awaited between the checks and the write, and `editReplyDelayMs`). `src/index.ts` exports only `createLocalApiServer`, so hosts cannot reach them.
+- In the dev command and tests, wait for another device's change by polling `getByDocId`, never by adding an `updated-docs` listener (see above). Closing two syncing managers can hang, so the dev command gives up after 5 s and then removes its temporary folders and discovery file itself. A reply held by `--edit-delay` gives way to close.
+- A blocked device keeps the project as joined, so its edits answer `NOT_PERMITTED` with reason `role`. Core does not export `BLOCKED_ROLE_ID`.
 
 ## Conventions
 

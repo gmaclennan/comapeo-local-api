@@ -28,6 +28,78 @@ export const {
 	{ code: 'INTERNAL_ERROR', message: 'Internal error' },
 ])
 
+const Editing = createErrorClassesByName([
+	{ code: 'EDITING_DISABLED', message: 'Editing is not allowed by the host' },
+	{ code: 'NOT_EDITABLE', message: 'This cannot be edited' },
+	{ code: 'FEATURE_NOT_FOUND', message: 'Feature not found' },
+	{
+		code: 'NOT_PERMITTED',
+		message: "This device's role does not allow this edit",
+	},
+	{
+		code: 'CONFLICT',
+		message: 'The feature has changed since it was fetched',
+	},
+	{ code: 'INVALID_VALUE', message: 'A value cannot be stored' },
+])
+
+export const { EditingDisabled } = Editing
+
+export interface NotEditableData {
+	target: 'layer' | 'column' | 'category' | 'geometry' | 'delete'
+	column?: string
+	reason?: 'no-location' | 'not-in-category'
+}
+
+export class NotEditable extends Editing.NotEditable {
+	readonly data: NotEditableData
+	constructor(data: NotEditableData) {
+		super()
+		this.data = data
+	}
+}
+
+export class FeatureNotFound extends Editing.FeatureNotFound {
+	readonly data: { deleted: boolean }
+	constructor(data: { deleted: boolean }) {
+		super()
+		this.data = data
+	}
+}
+
+export class NotPermitted extends Editing.NotPermitted {
+	readonly data: { reason: 'not-own' | 'role' }
+	constructor(data: { reason: 'not-own' | 'role' }) {
+		super()
+		this.data = data
+	}
+}
+
+export class Conflict extends Editing.Conflict {
+	readonly data: { feature: object }
+	constructor(data: { feature: object }) {
+		super()
+		this.data = data
+	}
+}
+
+export interface InvalidValueData {
+	target: 'column' | 'category' | 'geometry'
+	column?: string
+	reason: string
+	detail?: string
+}
+
+export class InvalidValue extends Editing.InvalidValue {
+	readonly data: InvalidValueData
+	constructor(data: InvalidValueData) {
+		super(
+			`A value cannot be stored: ${data.reason}${data.column ? ` (${data.column})` : ''}${data.detail ? `: ${data.detail}` : ''}`,
+		)
+		this.data = data
+	}
+}
+
 /** Errors thrown by the server API to its host. */
 export const { ServerAlreadyStarted, ServerClosed, SocketPathTooLong } =
 	createErrorClassesByName([
@@ -57,4 +129,10 @@ export const PROTOCOL_ERROR_CODES: ReadonlySet<string> = new Set([
 	LayerNotFound.code,
 	InvalidCursor.code,
 	InternalError.code,
+	EditingDisabled.code,
+	NotEditable.code,
+	FeatureNotFound.code,
+	NotPermitted.code,
+	Conflict.code,
+	InvalidValue.code,
 ])

@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import type { MapeoProject } from '@comapeo/core'
 import type {
 	Field,
+	FieldValue,
 	Observation,
 	ObservationValue,
 	Preset,
@@ -107,7 +108,9 @@ function categoryTags(
 	const tags: Observation['tags'] = { ...preset.tags }
 	for (const ref of preset.fieldRefs) {
 		const field = fields.get(ref.docId)
-		if (!field || random() < 0.2) continue
+		// A field on a tag the category sets keeps the category's value
+		if (!field || Object.hasOwn(preset.tags, field.tagKey)) continue
+		if (random() < 0.2) continue
 		const value = fieldValue(random, field)
 		if (value !== undefined) tags[field.tagKey] = value
 	}
@@ -176,6 +179,131 @@ export function missingAttachment(
 		hash: randomBytes(32).toString('hex'),
 		external: false,
 	}
+}
+
+const choice = (
+	tagKey: string,
+	label: string,
+	values: Array<string | number>,
+): FieldValue => ({
+	schemaName: 'field',
+	tagKey,
+	type: 'selectOne',
+	label,
+	options: values.map((value) => ({ value, label: String(value) })),
+})
+
+/**
+ * Categories with the kinds of field the default config lacks: number, date,
+ * multi-choice and numeric options, and two categories told apart by a tag
+ * that one of their fields sets.
+ */
+export async function addEditingCategories(project: MapeoProject) {
+	const presets = (await project.preset.getMany()) as PresetDoc[]
+	const iconRef = presets.find((p) => p.iconRef)?.iconRef
+	const create = async (field: FieldValue) => {
+		const doc = await project.field.create(field)
+		return { docId: doc.docId, versionId: doc.versionId }
+	}
+	const survey = [
+		await create({
+			schemaName: 'field',
+			tagKey: 'plot-area',
+			type: 'number',
+			label: 'Plot area (ha)',
+		}),
+		await create({
+			schemaName: 'field',
+			tagKey: 'visit-date',
+			type: 'date',
+			label: 'Visit date',
+		}),
+		await create({
+			schemaName: 'field',
+			tagKey: 'threats',
+			type: 'selectMultiple',
+			label: 'Threats',
+			options: ['fire', 'logging', 'mining', 'hunting'].map((value) => ({
+				value,
+				label: value[0]?.toUpperCase() + value.slice(1),
+			})),
+		}),
+		await create(choice('plot-quality', 'Plot quality', [1, 2, 3])),
+	]
+	const source = await create(
+		choice('water-source', 'Water source', ['well', 'spring']),
+	)
+	const depth = await create({
+		schemaName: 'field',
+		tagKey: 'well-depth',
+		type: 'number',
+		label: 'Well depth (m)',
+	})
+	const category = (
+		name: string,
+		tags: Record<string, string>,
+		fieldRefs: Array<{ docId: string; versionId: string }>,
+		color: string,
+	) =>
+		project.preset.create({
+			schemaName: 'preset',
+			name,
+			geometry: ['point'],
+			tags,
+			addTags: {},
+			removeTags: {},
+			fieldRefs,
+			terms: [],
+			color,
+			...(iconRef && { iconRef }),
+		})
+	await category('Survey plot', { survey: 'plot' }, survey, '#6A4C93')
+	await category('Well', { 'water-source': 'well' }, [source, depth], '#1982C4')
+	await category('Spring', { 'water-source': 'spring' }, [source], '#8AC926')
+}
+
+const EDITING_EXAMPLES: Array<{ name: string; tags: Observation['tags'] }> = [
+	{
+		name: 'Survey plot',
+		tags: {
+			'plot-area': 2.5,
+			'visit-date': '2026-03-01',
+			threats: ['fire', 'logging'],
+			'plot-quality': 2,
+		},
+	},
+	{ name: 'Well', tags: { 'well-depth': 12 } },
+	{ name: 'Spring', tags: {} },
+]
+
+/**
+ * One observation in each category from `addEditingCategories`, with every
+ * field answered, so that there is always one of each to edit.
+ */
+export async function addEditingObservations(
+	project: MapeoProject,
+	random: Random,
+) {
+	const presets = (await project.preset.getMany()) as PresetDoc[]
+	for (const { name, tags } of EDITING_EXAMPLES) {
+		const preset = presets.find((p) => p.name === name)
+		if (!preset) throw new Error(`No category named ${name}`)
+		const settlement = pick(random, SETTLEMENTS)
+		const timestamp = new Date(Date.now() - random() * 30 * 864e5).toISOString()
+		await project.observation.create({
+			schemaName: 'observation',
+			lat: Number((settlement.lat + gaussian(random) * 0.02).toFixed(6)),
+			lon: Number((settlement.lon + gaussian(random) * 0.02).toFixed(6)),
+			tags: { ...preset.tags, ...tags, notes: `An example ${name}` },
+			attachments: [],
+			presetRef: { docId: preset.docId, versionId: preset.versionId },
+			metadata: {
+				manualLocation: false,
+				position: position(settlement.lon, settlement.lat, random, timestamp),
+			},
+		})
+	}
+	return EDITING_EXAMPLES.length
 }
 
 export interface SeedOptions {

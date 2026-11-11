@@ -12,6 +12,7 @@ import {
 import {
 	buildColumns,
 	coerceValue,
+	NOTES_TAG,
 	OBSERVATION_BUILTINS,
 	publicColumn,
 	schemaVersion,
@@ -31,22 +32,30 @@ interface DocFields {
 	createdBy?: string | undefined
 	updatedBy?: string | undefined
 	deleted: boolean
+	forks?: string[]
+	links?: string[]
 }
 
-type ObservationDoc = Observation & DocFields
+export type ObservationDoc = Observation & DocFields
 type TrackDoc = Track & DocFields
-type PresetDoc = Preset & DocFields
+export type PresetDoc = Preset & DocFields
 type FieldDoc = Field & DocFields
 
 export type LayerId = 'observations' | 'tracks'
 
-interface LayerSpec {
+type EditOperation = 'properties' | 'category' | 'delete'
+
+export type OwnRole = Awaited<ReturnType<MapeoProject['$getOwnRole']>>
+
+export interface LayerSpec {
 	layerId: LayerId
 	title: string
 	docType: 'observation' | 'track'
 	geometryType: 'Point' | 'LineString'
 	presetGeometry: 'point' | 'line'
 	builtins: typeof OBSERVATION_BUILTINS
+	/** Empty when the layer cannot be edited through the API */
+	editOperations: readonly EditOperation[]
 }
 
 export const LAYERS: readonly LayerSpec[] = [
@@ -57,6 +66,7 @@ export const LAYERS: readonly LayerSpec[] = [
 		geometryType: 'Point',
 		presetGeometry: 'point',
 		builtins: OBSERVATION_BUILTINS,
+		editOperations: ['properties', 'category', 'delete'],
 	},
 	{
 		layerId: 'tracks',
@@ -65,6 +75,7 @@ export const LAYERS: readonly LayerSpec[] = [
 		geometryType: 'LineString',
 		presetGeometry: 'line',
 		builtins: TRACK_BUILTINS,
+		editOperations: [],
 	},
 ]
 
@@ -82,6 +93,8 @@ interface FeatureAttachment {
 export interface Feature {
 	id: string
 	version: string
+	forks: string[]
+	editable: boolean
 	geometry: Geometry | null
 	times?: string[]
 	properties: Record<string, unknown>
@@ -162,16 +175,64 @@ function compareIds(a: string, b: string): number {
 	return a < b ? -1 : a > b ? 1 : 0
 }
 
-function getLayerSpec(layerId: string): LayerSpec {
+export function getLayerSpec(layerId: string): LayerSpec {
 	const spec = LAYERS.find((l) => l.layerId === layerId)
 	if (!spec) throw new LayerNotFound({ layerId })
 	return spec
 }
 
-interface LayerContext {
+const GEOMETRY_TYPES = { point: 'Point', line: 'LineString' } as const
+
+export interface LayerContext {
 	spec: LayerSpec
 	columns: Column[]
 	presets: PresetDoc[]
+}
+
+/** What this device's role and a document allow, read once per request. */
+export interface Permissions {
+	deviceId: string
+	writeOwn: boolean
+	writeOthers: boolean
+}
+
+export function permissions(project: MapeoProject, role: OwnRole): Permissions {
+	const docs = role.docs.observation
+	return {
+		deviceId: project.deviceId,
+		writeOwn: docs.writeOwn,
+		writeOthers: docs.writeOthers,
+	}
+}
+
+export function mayEdit(
+	perms: Permissions,
+	doc: { createdBy?: string | undefined },
+): boolean {
+	return (
+		perms.writeOthers || (perms.writeOwn && doc.createdBy === perms.deviceId)
+	)
+}
+
+function layerColumns(
+	spec: LayerSpec,
+	presets: PresetDoc[],
+	fields: FieldDoc[],
+): Column[] {
+	return buildColumns({
+		builtins: spec.builtins,
+		presets,
+		fields,
+		geometry: spec.presetGeometry,
+		editable: spec.editOperations.includes('properties'),
+	})
+}
+
+const MAX_CACHED_LANGS = 8
+
+interface CachedContexts {
+	project: MapeoProject
+	byLang: Map<string, Promise<Map<LayerId, LayerContext>>>
 }
 
 export interface GetFeaturesParams {
@@ -186,12 +247,15 @@ export interface GetFeaturesParams {
 /** Reads project data from a MapeoManager in the shapes PROTOCOL.md defines. */
 export class ProjectData {
 	#manager: MapeoManager
+	#allowEdits: boolean
 	#iconCache = new Map<string, Promise<InlineIcon | undefined>>()
 	#snapshots = new Map<string, Snapshot>()
+	#contexts = new Map<string, CachedContexts>()
 	#closing = new AbortController()
 
-	constructor(manager: MapeoManager) {
+	constructor(manager: MapeoManager, { allowEdits }: { allowEdits: boolean }) {
 		this.#manager = manager
+		this.#allowEdits = allowEdits
 	}
 
 	/** Makes running requests give up on slow work, such as media server calls. */
@@ -241,20 +305,30 @@ export class ProjectData {
 
 	async listLayers(projectId: string, lang?: string) {
 		const project = await this.getProject(projectId)
-		const { presets, fields } = await this.#loadCategories(project, lang)
+		const [{ presets, fields }, role] = await Promise.all([
+			this.#loadCategories(project, lang),
+			project.$getOwnRole(),
+		])
+		const perms = permissions(project, role)
 		return LAYERS.map((spec) => {
-			const columns = buildColumns({
-				builtins: spec.builtins,
-				presets,
-				fields,
-				geometry: spec.presetGeometry,
-			})
+			const columns = layerColumns(spec, presets, fields)
+			const readOnlyReason =
+				spec.editOperations.length === 0
+					? 'unsupported'
+					: !this.#allowEdits
+						? 'disabled'
+						: !perms.writeOwn && !perms.writeOthers
+							? 'role'
+							: undefined
 			return {
 				layerId: spec.layerId,
 				title: spec.title,
 				docType: spec.docType,
 				geometryType: spec.geometryType,
 				schemaVersion: schemaVersion(columns),
+				editable: readOnlyReason === undefined,
+				...(readOnlyReason && { readOnlyReason }),
+				editOperations: [...spec.editOperations],
 				columns: columns.map(publicColumn),
 			}
 		})
@@ -269,8 +343,15 @@ export class ProjectData {
 					categoryId: string
 					name: string
 					color?: string
+					geometryTypes: string[]
 					icon?: InlineIcon
-				} = { categoryId: preset.docId, name: preset.name }
+				} = {
+					categoryId: preset.docId,
+					name: preset.name,
+					geometryTypes: LAYERS.filter((l) =>
+						preset.geometry.includes(l.presetGeometry),
+					).map((l) => GEOMETRY_TYPES[l.presetGeometry]),
+				}
 				if (preset.color) out.color = preset.color
 				if (preset.iconRef) {
 					const icon = await this.#getIcon(project, preset.iconRef)
@@ -292,17 +373,16 @@ export class ProjectData {
 			params.cursor == null ? null : decodeCursor(params.cursor, cursorScope)
 		const after = cursor?.after ?? null
 
-		const { presets, fields } = await this.#loadCategories(project, lang)
+		const [{ presets, fields }, role] = await Promise.all([
+			this.#loadCategories(project, lang),
+			project.$getOwnRole(),
+		])
 		const ctx: LayerContext = {
 			spec,
 			presets,
-			columns: buildColumns({
-				builtins: spec.builtins,
-				presets,
-				fields,
-				geometry: spec.presetGeometry,
-			}),
+			columns: layerColumns(spec, presets, fields),
 		}
+		const perms = permissions(project, role)
 		const dataType =
 			spec.docType === 'observation' ? project.observation : project.track
 
@@ -366,7 +446,10 @@ export class ProjectData {
 				lastTaken = id
 				continue
 			}
-			const feature = await this.#toFeature(project, ctx, doc, deviceNames)
+			const feature = await this.toFeature(project, ctx, doc, {
+				deviceNames,
+				perms,
+			})
 			const size = Buffer.byteLength(JSON.stringify(feature), 'utf8')
 			if (pageHasItems && bytes + size > PAGE_BYTE_BUDGET) {
 				more = true
@@ -440,6 +523,66 @@ export class ProjectData {
 	clearCache() {
 		this.#iconCache.clear()
 		this.#snapshots.clear()
+		this.#contexts.clear()
+	}
+
+	/** Drops the cached categories and columns of a project. */
+	invalidate(projectId: string) {
+		this.#contexts.delete(projectId)
+	}
+
+	/**
+	 * The layer's categories and columns, cached per project and language. Only
+	 * cache while `cached` is true, that is while something drops the cache
+	 * when the categories change.
+	 */
+	async layerContext(
+		project: MapeoProject,
+		projectId: string,
+		spec: LayerSpec,
+		lang: string | undefined,
+		cached: boolean,
+	): Promise<LayerContext> {
+		const load = async () => {
+			const { presets, fields } = await this.#loadCategories(project, lang)
+			return new Map(
+				LAYERS.map((s) => [
+					s.layerId,
+					{ spec: s, presets, columns: layerColumns(s, presets, fields) },
+				]),
+			)
+		}
+		let contexts: Promise<Map<LayerId, LayerContext>>
+		if (!cached) {
+			contexts = load()
+		} else {
+			let entry = this.#contexts.get(projectId)
+			if (!entry || entry.project !== project) {
+				entry = { project, byLang: new Map() }
+				this.#contexts.set(projectId, entry)
+			}
+			const key = lang ?? ''
+			const existing = entry.byLang.get(key)
+			if (existing) {
+				contexts = existing
+			} else {
+				contexts = load()
+				// lang is whatever the client sends, so bound the entries it can add
+				if (entry.byLang.size >= MAX_CACHED_LANGS) {
+					entry.byLang.delete(entry.byLang.keys().next().value as string)
+				}
+				entry.byLang.set(key, contexts)
+				const byLang = entry.byLang
+				contexts.catch(() => {
+					if (byLang.get(key) === contexts) byLang.delete(key)
+				})
+			}
+		}
+		return (await contexts).get(spec.layerId) as LayerContext
+	}
+
+	deviceNames(project: MapeoProject) {
+		return this.#deviceNames(project)
 	}
 
 	async #loadCategories(
@@ -482,16 +625,21 @@ export class ProjectData {
 		return pending
 	}
 
-	async #toFeature(
+	async toFeature(
 		project: MapeoProject,
 		ctx: LayerContext,
 		doc: ObservationDoc | TrackDoc,
-		deviceNames: Map<string, string>,
+		{
+			deviceNames,
+			perms,
+		}: { deviceNames: Map<string, string>; perms: Permissions },
 	): Promise<Feature> {
 		const category = matchCategory(doc, ctx.presets)
 		const deviceName = (deviceId: string | undefined) =>
 			deviceId ? (deviceNames.get(deviceId) ?? deviceId) : null
 
+		const tag = (key: string) =>
+			Object.hasOwn(doc.tags, key) ? doc.tags[key] : undefined
 		const builtinValues: Record<string, unknown> = {
 			id: doc.docId,
 			category: category?.name ?? null,
@@ -515,6 +663,7 @@ export class ProjectData {
 			builtinValues.audio_count = doc.attachments.filter(
 				(a) => a.type === 'audio',
 			).length
+			builtinValues.notes = tag(NOTES_TAG)
 			if (typeof doc.lat === 'number' && typeof doc.lon === 'number') {
 				geometry = { type: 'Point', coordinates: [doc.lon, doc.lat] }
 			}
@@ -539,8 +688,6 @@ export class ProjectData {
 
 		// A column or tag key such as `__proto__` or `constructor` must not reach Object.prototype
 		const properties: Record<string, unknown> = Object.create(null)
-		const tag = (key: string) =>
-			Object.hasOwn(doc.tags, key) ? doc.tags[key] : undefined
 		for (const column of ctx.columns) {
 			if (column.role === 'builtin') {
 				properties[column.name] = coerceValue(
@@ -560,6 +707,8 @@ export class ProjectData {
 		const feature: Feature = {
 			id: doc.docId,
 			version: doc.versionId,
+			forks: [...(doc.forks ?? [])].sort(compareIds),
+			editable: ctx.spec.editOperations.length > 0 && mayEdit(perms, doc),
 			geometry,
 			properties,
 			categoryId: category?.docId ?? null,
