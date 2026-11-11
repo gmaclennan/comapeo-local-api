@@ -228,6 +228,8 @@ function layerColumns(
 	})
 }
 
+const MAX_CACHED_LANGS = 8
+
 interface CachedContexts {
 	project: MapeoProject
 	byLang: Map<string, Promise<Map<LayerId, LayerContext>>>
@@ -565,6 +567,10 @@ export class ProjectData {
 				contexts = existing
 			} else {
 				contexts = load()
+				// lang is whatever the client sends, so bound the entries it can add
+				if (entry.byLang.size >= MAX_CACHED_LANGS) {
+					entry.byLang.delete(entry.byLang.keys().next().value as string)
+				}
 				entry.byLang.set(key, contexts)
 				const byLang = entry.byLang
 				contexts.catch(() => {
