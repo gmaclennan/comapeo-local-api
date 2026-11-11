@@ -1,0 +1,109 @@
+{
+	"name": "@comapeo/local-api",
+	"version": "0.0.0",
+	"description": "Local socket API exposing CoMapeo project data to other programs on the same computer",
+	"keywords": [],
+	"license": "MIT",
+	"author": "Awana Digital",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/digidem/comapeo-local-api.git"
+	},
+	"homepage": "https://github.com/digidem/comapeo-local-api#readme",
+	"bugs": {
+		"url": "https://github.com/digidem/comapeo-local-api/issues"
+	},
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"dist"
+	],
+	"engines": {
+		"node": ">=22"
+	},
+	"sideEffects": false,
+	"scripts": {
+		"build": "rimraf dist && tsc -p tsconfig.build.json",
+		"prepack": "npm run build",
+		"prepare": "husky",
+		"format": "prettier --write .",
+		"test": "run-s test:types test:lint test:unused test:unit",
+		"test:types": "tsc",
+		"test:lint": "eslint",
+		"test:unused": "knip",
+		"test:unit": "node --test \"test/**/*.test.ts\"",
+		"coverage": "c8 --reporter=lcov --reporter=text node --test \"test/**/*.test.ts\"",
+		"check:pkg": "npm run build && publint && attw --pack --profile esm-only",
+		"changeset": "changeset",
+		"release": "changeset publish",
+		"dev": "node src/dev/cli.ts"
+	},
+	"prettier": {
+		"semi": false,
+		"singleQuote": true,
+		"useTabs": true,
+		"importOrder": [
+			"^node:",
+			"<THIRD_PARTY_MODULES>",
+			"^[./]"
+		],
+		"importOrderSeparation": true,
+		"plugins": [
+			"@trivago/prettier-plugin-sort-imports"
+		],
+		"overrides": [
+			{
+				"files": "*.md",
+				"options": {
+					"useTabs": false
+				}
+			}
+		]
+	},
+	"lint-staged": {
+		"*.{js,mjs,cjs,ts,mts,cts}": "eslint --cache --fix",
+		"*": "prettier --write --ignore-unknown"
+	},
+	"devDependencies": {
+		"@arethetypeswrong/cli": "^0.18.5",
+		"@changesets/changelog-github": "^1.0.1",
+		"@changesets/cli": "^3.0.3",
+		"@comapeo/core": "^7.7.0",
+		"@eslint/js": "^10.0.1",
+		"@trivago/prettier-plugin-sort-imports": "^6.0.2",
+		"@types/node": "^22.20.5",
+		"c8": "^12.0.0",
+		"eslint": "^10.14.0",
+		"globals": "^17.14.0",
+		"husky": "^9.1.7",
+		"knip": "^6.45.0",
+		"lint-staged": "^17.6.0",
+		"npm-run-all2": "^9.0.4",
+		"prettier": "^3.9.10",
+		"publint": "^0.3.25",
+		"rimraf": "^6.1.4",
+		"typescript": "~6.0",
+		"typescript-eslint": "^8.72.2"
+	},
+	"dependencies": {
+		"@mapeo/default-config": "^6.0.0",
+		"custom-error-creator": "^1.4.0",
+		"fastify": "^4.29.1",
+		"jpeg-js": "^0.4.4"
+	},
+	"overrides": {
+		"better-sqlite3": "^12.11.1"
+	},
+	"peerDependencies": {
+		"@comapeo/core": "^7.5.2"
+	},
+	"bin": {
+		"comapeo-local-api-dev": "./dist/dev/cli.js"
+	}
+}
