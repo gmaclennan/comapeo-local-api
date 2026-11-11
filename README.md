@@ -34,11 +34,11 @@ await server.close()
 
 ### Dev server
 
-`comapeo-local-api-dev` serves generated test projects from a throwaway core (in-memory database, cores in a temporary directory removed on exit), for building and testing clients without CoMapeo Desktop:
+The dev server serves generated test projects from a throwaway core (in-memory database, cores in a temporary directory removed on exit), for building and testing clients without CoMapeo Desktop. It is not part of the published package: run it from a checkout of this repository after `npm install`, with Node 22.18 or later (Node runs the TypeScript source directly):
 
 ```sh
-npx comapeo-local-api-dev --discovery-dir /tmp/comapeo-dev
-# from a checkout: npm run dev -- --discovery-dir /tmp/comapeo-dev
+npm run dev -- --discovery-dir /tmp/comapeo-dev
+# or: node src/dev/cli.ts --discovery-dir /tmp/comapeo-dev
 ```
 
 It prints `READY <discovery file path>` on stdout when the server is listening, and runs until interrupted. Type `help` on stdin for commands that create, update or delete an observation, or add a category; each prints an `OK {…}` or `ERROR …` line. Options: `--observations`, `--tracks`, `--photos`, `--projects` (1 or 2), `--seed`.

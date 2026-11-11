@@ -16,7 +16,7 @@ npm run dev -- --discovery-dir <dir>   # dev server with generated projects
 
 ## Layout
 
-`src/server.ts` (sockets, handshake, dispatch), `src/project-data.ts` (reads from `MapeoManager`), `src/columns.ts`, `src/categories.ts`, `src/subscriptions.ts`, `src/discovery.ts`. `src/dev/` holds the dev command and the generated test data; tests reuse `src/dev/manager.ts` for a real in-memory `MapeoManager` with a listening media server.
+`src/server.ts` (sockets, handshake, dispatch), `src/project-data.ts` (reads from `MapeoManager`), `src/columns.ts`, `src/categories.ts`, `src/subscriptions.ts`, `src/discovery.ts`. `src/dev/` holds the dev command and the generated test data; tests reuse `src/dev/manager.ts` for a real in-memory `MapeoManager` with a listening media server. `src/dev/` is left out of `dist/` and the published package, so anything only it imports (Fastify, `jpeg-js`, `@mapeo/default-config`) is a dev dependency; desktop installs only `dependencies`.
 
 ## Gotchas
 
