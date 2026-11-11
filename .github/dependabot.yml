@@ -15,6 +15,9 @@ updates:
       # typescript-eslint's peer range stops at <6.1.0; lift when it supports TS 7
       - dependency-name: typescript
         update-types: ['version-update:semver-major']
+      # @comapeo/core's FastifyController needs a Fastify 4 instance
+      - dependency-name: fastify
+        update-types: ['version-update:semver-major']
     groups:
       dev-dependencies:
         dependency-type: development
