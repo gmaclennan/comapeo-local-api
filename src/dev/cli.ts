@@ -87,7 +87,7 @@ async function main() {
 		stopping = true
 		await server.close().catch(() => {})
 		await dev.close().catch(() => {})
-		await fs.rm(mediaDir, { recursive: true, force: true })
+		await fs.rm(mediaDir, { recursive: true, force: true }).catch(() => {})
 		process.exit(code)
 	}
 	process.once('SIGINT', () => stop(0))
@@ -137,22 +137,26 @@ async function main() {
 
 		const commands = new DevCommands(projects, seed)
 		const rl = readline.createInterface({ input: process.stdin })
-		rl.on('line', (line) => {
+		// One command at a time, in the order typed, so that each OK follows the last
+		let queue = Promise.resolve()
+		const handle = async (line: string) => {
 			if (line.trim() === 'help') {
 				log(DevCommands.HELP)
 				return
 			}
 			if (line.trim() === 'quit') {
-				void stop(0)
+				await stop(0)
 				return
 			}
-			commands.run(line).then(
-				(result) => result && console.log(`OK ${JSON.stringify(result)}`),
-				(err: unknown) =>
-					console.log(
-						`ERROR ${err instanceof Error ? err.message : String(err)}`,
-					),
-			)
+			try {
+				const result = await commands.run(line)
+				if (result) console.log(`OK ${JSON.stringify(result)}`)
+			} catch (err) {
+				console.log(`ERROR ${err instanceof Error ? err.message : String(err)}`)
+			}
+		}
+		rl.on('line', (line) => {
+			queue = queue.then(() => handle(line))
 		})
 		log('Type "help" for commands that change data; Ctrl-C to stop.')
 	} catch (err) {
