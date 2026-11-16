@@ -33,6 +33,8 @@ function replyIds(client: TestClient): number[] {
 	let buffer = Buffer.concat(client.received)
 	while (buffer.length >= 4) {
 		const length = buffer.readUInt32LE(0)
+		// Polled while replies stream in, so the last frame can be partial
+		if (buffer.length < 4 + length) break
 		const message = JSON.parse(buffer.subarray(4, 4 + length).toString())
 		if (typeof message.id === 'number') ids.push(message.id)
 		buffer = buffer.subarray(4 + length)
