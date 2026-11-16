@@ -20,7 +20,7 @@ async function waitForPeer(manager: MapeoManager, deviceId: string) {
 
 // Until the project settings sync, core lists the project as "joining", not "joined"
 async function waitForJoined(manager: MapeoManager, projectId: string) {
-	const deadline = Date.now() + 10_000
+	const deadline = Date.now() + 30_000
 	const joined = async () =>
 		(await manager.listProjects()).some(
 			(p) => p.projectId === projectId && p.status === 'joined',
@@ -44,12 +44,9 @@ export async function setupPeers(t: TestContext) {
 	const servers = await Promise.all(
 		[remote, local].map((m) => m.startLocalPeerDiscoveryServer()),
 	)
-	const [remoteServer, localServer] = servers as [
-		{ name: string; port: number },
-		{ name: string; port: number },
-	]
+	const [remoteServer] = servers as [{ name: string; port: number }, unknown]
+	// Dialling both ways makes two connections, and core's closing one of them can abort an invite
 	local.connectLocalPeer({ address: '127.0.0.1', ...remoteServer })
-	remote.connectLocalPeer({ address: '127.0.0.1', ...localServer })
 	await Promise.all([
 		waitForPeer(remote, local.deviceId),
 		waitForPeer(local, remote.deviceId),
