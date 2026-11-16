@@ -8,7 +8,12 @@ import { parseArgs } from 'node:util'
 import { createLocalApiServer } from '../server.ts'
 import { DevCommands } from './commands.ts'
 import { createDevManager } from './manager.ts'
-import { seedProject } from './seed.ts'
+import {
+	addFieldTypeCategories,
+	addFieldTypeExamples,
+	createRandom,
+	seedProject,
+} from './seed.ts'
 
 const USAGE = `Usage: node src/dev/cli.ts [options]
 
@@ -122,12 +127,16 @@ async function main() {
 				projectDescription,
 			})
 			const project = await dev.manager.getProject(projectId)
+			await addFieldTypeCategories(project)
 			log(`Seeding "${name}"…`)
 			const summary = await seedProject(project, {
 				...spec,
 				seed: seed + i,
 				mediaDir,
 			})
+			if (spec.observations > 0) {
+				await addFieldTypeExamples(project, createRandom(seed + i))
+			}
 			log(`  ${projectId}: ${JSON.stringify(summary)}`)
 			projects.push({ projectId, project })
 		}

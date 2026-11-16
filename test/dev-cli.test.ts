@@ -6,7 +6,7 @@ import * as readline from 'node:readline'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { TestClient } from './helpers/client.ts'
+import { TestClient, type Wire } from './helpers/client.ts'
 import { tempDir } from './helpers/server.ts'
 
 const CLI = fileURLToPath(new URL('../src/dev/cli.ts', import.meta.url))
@@ -53,6 +53,17 @@ test('dev command serves generated projects and changes data on stdin', async (t
 	})
 	assert.ok(categories.length > 10)
 	assert.ok(categories.every((c: { icon?: unknown }) => c.icon))
+	const [observationLayer] = (
+		await client.request('layers.list', { projectId: main.projectId })
+	).layers
+	const columnTypes = new Map<string, string>(
+		observationLayer.columns.map((c: Wire) => [c.name, c.type]),
+	)
+	assert.equal(columnTypes.get('plot_area'), 'number')
+	assert.equal(columnTypes.get('visit_date'), 'datetime')
+	assert.equal(columnTypes.get('threats'), 'string_list')
+	assert.equal(columnTypes.get('plot_quality'), 'number')
+	assert.equal(columnTypes.get('well_depth'), 'number')
 
 	const observations = await client.request('layers.getFeatures', {
 		projectId: main.projectId,
@@ -74,6 +85,13 @@ test('dev command serves generated projects and changes data on stdin', async (t
 		new Set(features.map((f) => f.categoryId)).size > 5,
 		'varied categories',
 	)
+	const survey = observations.features.find(
+		(f: Wire) => f.properties.notes === 'An example Survey plot',
+	)
+	assert.deepEqual(survey.properties.threats, ['fire', 'logging'])
+	assert.equal(survey.properties.plot_quality, 2)
+	assert.equal(survey.properties.plot_area, 2.5)
+	assert.equal(survey.properties.visit_date, '2026-03-01')
 
 	const attachments = features.flatMap((f) => f.attachments)
 	const statuses = await Promise.all(
