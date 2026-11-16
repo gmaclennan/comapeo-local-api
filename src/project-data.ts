@@ -12,6 +12,7 @@ import {
 import {
 	buildColumns,
 	coerceValue,
+	NOTES_TAG,
 	OBSERVATION_BUILTINS,
 	publicColumn,
 	schemaVersion,
@@ -492,6 +493,8 @@ export class ProjectData {
 		const deviceName = (deviceId: string | undefined) =>
 			deviceId ? (deviceNames.get(deviceId) ?? deviceId) : null
 
+		const tag = (key: string) =>
+			Object.hasOwn(doc.tags, key) ? doc.tags[key] : undefined
 		const builtinValues: Record<string, unknown> = {
 			id: doc.docId,
 			category: category?.name ?? null,
@@ -515,6 +518,7 @@ export class ProjectData {
 			builtinValues.audio_count = doc.attachments.filter(
 				(a) => a.type === 'audio',
 			).length
+			builtinValues.notes = tag(NOTES_TAG)
 			if (typeof doc.lat === 'number' && typeof doc.lon === 'number') {
 				geometry = { type: 'Point', coordinates: [doc.lon, doc.lat] }
 			}
@@ -539,8 +543,6 @@ export class ProjectData {
 
 		// A column or tag key such as `__proto__` or `constructor` must not reach Object.prototype
 		const properties: Record<string, unknown> = Object.create(null)
-		const tag = (key: string) =>
-			Object.hasOwn(doc.tags, key) ? doc.tags[key] : undefined
 		for (const column of ctx.columns) {
 			if (column.role === 'builtin') {
 				properties[column.name] = coerceValue(

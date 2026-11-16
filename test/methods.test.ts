@@ -18,6 +18,7 @@ import { APP, setup, tempDir } from './helpers/server.ts'
 const OBSERVATION_BUILTINS = [
 	'id',
 	'category',
+	'notes',
 	'created_at',
 	'updated_at',
 	'created_by',
@@ -135,10 +136,12 @@ describe('errors', () => {
 	test('unknown method, missing params, unknown project and layer', async (t) => {
 		const { client, projectId } = await setup(t)
 		const c = await client()
-		assert.equal(
-			(await rpcError(c.request('features.update', {}))).code,
-			'METHOD_NOT_FOUND',
-		)
+		for (const method of ['features.update', 'features.delete']) {
+			assert.equal(
+				(await rpcError(c.request(method, {}))).code,
+				'METHOD_NOT_FOUND',
+			)
+		}
 		assert.equal(
 			(await rpcError(c.request('layers.list', {}))).code,
 			'INVALID_PARAMS',
@@ -479,6 +482,7 @@ describe('layers.getFeatures', () => {
 		assert.equal(a.properties.altitude, 42)
 		assert.equal(a.properties.photo_count, 0)
 		assert.equal(a.properties.audio_count, 0)
+		assert.equal(a.properties.notes, 'hello')
 		assert.deepEqual(a.properties.tags, {
 			type: 'building',
 			'building-type': 'School',
@@ -491,7 +495,46 @@ describe('layers.getFeatures', () => {
 		assert.equal(b.properties.category, null)
 		assert.equal(b.properties.accuracy, null)
 		assert.equal(b.properties.building_type, null)
+		assert.equal(b.properties.notes, null)
 		assert.deepEqual(Object.keys(b.properties).sort(), [...columns].sort())
+	})
+
+	test('a field on the notes tag is the notes column, with no built-in one', async (t) => {
+		const { client, projectId, project } = await setup(t)
+		const field = await project.field.create({
+			schemaName: 'field',
+			tagKey: 'notes',
+			type: 'text',
+			label: 'Field notes',
+		})
+		await project.preset.create({
+			schemaName: 'preset',
+			name: 'Noted',
+			geometry: ['point'],
+			tags: { noted: 'yes' },
+			addTags: {},
+			removeTags: {},
+			fieldRefs: [{ docId: field.docId, versionId: field.versionId }],
+			terms: [],
+		})
+		const doc = await project.observation.create(
+			observationValue({ tags: { noted: 'yes', notes: 'by the river' } }),
+		)
+		const c = await client()
+		const [observations] = (await c.request('layers.list', { projectId }))
+			.layers
+		assert.deepEqual(
+			observations.columns.filter((col: Wire) => col.name.endsWith('notes')),
+			[{ name: 'notes', type: 'string', label: 'Field notes', role: 'field' }],
+		)
+		const {
+			features: [feature],
+		} = await c.request('layers.getFeatures', {
+			projectId,
+			layerId: 'observations',
+			ids: [doc.docId],
+		})
+		assert.equal(feature.properties.notes, 'by the river')
 	})
 
 	test('pages with a cursor until nextCursor is null', async (t) => {

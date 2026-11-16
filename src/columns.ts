@@ -33,9 +33,14 @@ interface BuiltinSpec {
 	label: string
 }
 
-const COMMON_BUILTINS: BuiltinSpec[] = [
+export const NOTES_TAG = 'notes'
+
+const IDENTITY_BUILTINS: BuiltinSpec[] = [
 	{ key: 'id', type: 'string', label: 'ID' },
 	{ key: 'category', type: 'string', label: 'Category' },
+]
+
+const RECORD_BUILTINS: BuiltinSpec[] = [
 	{ key: 'created_at', type: 'datetime', label: 'Created' },
 	{ key: 'updated_at', type: 'datetime', label: 'Updated' },
 	{ key: 'created_by', type: 'string', label: 'Created by' },
@@ -43,7 +48,9 @@ const COMMON_BUILTINS: BuiltinSpec[] = [
 ]
 
 export const OBSERVATION_BUILTINS: BuiltinSpec[] = [
-	...COMMON_BUILTINS,
+	...IDENTITY_BUILTINS,
+	{ key: NOTES_TAG, type: 'string', label: 'Notes' },
+	...RECORD_BUILTINS,
 	{ key: 'accuracy', type: 'number', label: 'GPS accuracy (m)' },
 	{ key: 'altitude', type: 'number', label: 'Altitude (m)' },
 	{ key: 'photo_count', type: 'integer', label: 'Photos' },
@@ -51,7 +58,8 @@ export const OBSERVATION_BUILTINS: BuiltinSpec[] = [
 ]
 
 export const TRACK_BUILTINS: BuiltinSpec[] = [
-	...COMMON_BUILTINS,
+	...IDENTITY_BUILTINS,
+	...RECORD_BUILTINS,
 	{ key: 'start_time', type: 'datetime', label: 'Start time' },
 	{ key: 'end_time', type: 'datetime', label: 'End time' },
 ]
@@ -235,13 +243,16 @@ export function buildColumns({
 		while (usedFieldNames.has(name)) name = `comapeo_${name}`
 		return name
 	}
-	const builtinColumns: Column[] = builtins.map((b) => ({
-		name: builtinName(b.key),
-		type: b.type,
-		label: b.label,
-		role: 'builtin',
-		builtin: b.key,
-	}))
+	const builtinColumns: Column[] = builtins
+		// A field on the notes tag is the notes column
+		.filter((b) => !(b.key === NOTES_TAG && fieldsByTagKey.has(NOTES_TAG)))
+		.map((b) => ({
+			name: builtinName(b.key),
+			type: b.type,
+			label: b.label,
+			role: 'builtin',
+			builtin: b.key,
+		}))
 	const tagsColumn: Column = {
 		name: builtinName(TAGS_KEY),
 		type: 'json',
