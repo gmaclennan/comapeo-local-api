@@ -4,7 +4,7 @@
 [![CI](https://github.com/digidem/comapeo-local-api/actions/workflows/test.yml/badge.svg)](https://github.com/digidem/comapeo-local-api/actions/workflows/test.yml)
 [![codecov](https://codecov.io/github/digidem/comapeo-local-api/graph/badge.svg)](https://codecov.io/github/digidem/comapeo-local-api)
 
-Local socket API exposing CoMapeo project data to other programs on the same computer. It serves a running `MapeoManager` read-only over a Unix socket (macOS, Linux) or named pipe (Windows), so that tools such as the CoMapeo QGIS plugin can show a project's observations, tracks, categories and media. The wire contract is [docs/PROTOCOL.md](docs/PROTOCOL.md).
+Local socket API exposing CoMapeo project data to other programs on the same computer. It serves a running `MapeoManager` read-only over a Unix socket (macOS, Linux) or named pipe (Windows), so that tools such as the CoMapeo QGIS plugin can show a project's observations, tracks, categories and media. The wire contract is [docs/PROTOCOL.md](docs/PROTOCOL.md). Editing was built and then set aside for a later release; that work is kept on the `parked/editing` branch.
 
 ## Installation
 
@@ -41,7 +41,9 @@ npm run dev -- --discovery-dir /tmp/comapeo-dev
 # or: node src/dev/cli.ts --discovery-dir /tmp/comapeo-dev
 ```
 
-It prints `READY <discovery file path>` on stdout when the server is listening, and runs until interrupted. Type `help` on stdin for commands that create, update or delete an observation, or add a category; each prints an `OK {…}` or `ERROR …` line. Options: `--observations`, `--tracks`, `--photos`, `--projects` (1 or 2), `--seed`.
+It prints `READY <discovery file path>` on stdout when the server is listening, and runs until interrupted. Type `help` on stdin for commands that create, update or delete an observation, or add a category; they run one at a time, in the order typed, and each prints an `OK {…}` or `ERROR …` line. Options: `--observations`, `--tracks`, `--photos`, `--projects` (1 or 2), `--seed`.
+
+Every project also gets three categories with the kinds of field the default categories lack: "Survey plot" (a number, a date, a multi-choice and a single-choice field with numeric options), and "Well" and "Spring", which are told apart by the `water-source` tag that their shared single-choice field sets. Only "Well" has a "Well depth" field. Unless `--observations 0` is given, each of the three also gets an example observation with every field answered.
 
 ## API
 

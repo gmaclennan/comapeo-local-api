@@ -1,6 +1,6 @@
 # CoMapeo local API: protocol version 1
 
-This document is the contract between `@comapeo/local-api` (server) and its clients (first: the CoMapeo QGIS plugin). Server and clients are built and released separately, so anything here changes only by adding a new protocol version.
+This document is the contract between `@comapeo/local-api` (server) and its clients (first: the CoMapeo QGIS plugin). Server and clients are built and released separately, so anything here changes only by adding a new protocol version, or by an addition that the rules in [Changes within a version](#changes-within-a-version) allow.
 
 ## Transport
 
@@ -40,6 +40,8 @@ JSON-RPC in style, not JSON-RPC 2.0 compliant.
 | Notification (server → client) | `{ "method": <string>, "params": <object> }`                                                      |
 
 Clients must ignore unknown properties in results and notifications, and unknown notification methods. Servers must ignore unknown properties in params. This is what allows additions within a protocol version.
+
+The server answers the requests of one connection in the order it received them, one at a time. A client may send further requests without waiting for replies. Notifications are not held back behind replies, and a client that is slow to read never delays another connection.
 
 Error codes: `UNSUPPORTED_PROTOCOL_VERSION`, `METHOD_NOT_FOUND`, `INVALID_PARAMS`, `PROJECT_NOT_FOUND`, `LAYER_NOT_FOUND`, `INVALID_CURSOR`, `INTERNAL_ERROR`.
 
@@ -96,10 +98,10 @@ Result:
 
 - A layer is a definition: a document type, a filter and a set of columns. Version 1 of the server returns exactly two layers per project, `observations` (`Point`) and `tracks` (`LineString`). Clients must cope with any number of layers and must not assume these ids.
 - `geometryType`: `Point` or `LineString`.
-- Column `type`: `string`, `number`, `integer`, `boolean`, `datetime` (ISO 8601 string), `string_list`, `json`. Clients treat an unknown type as `string`.
+- Column `type`: `string`, `number`, `integer`, `boolean`, `datetime` (ISO 8601 string: a date, or a date and time), `string_list`, `json`. Clients treat an unknown type as `string`.
 - Column `role`: `builtin`, `field` (one per field defined in the project's categories, named by its tag key) or `tags` (one catch-all column holding every tag as an object).
 - Column names are unique within a layer, stable across languages, and safe to use unquoted in QGIS expressions (`[a-z_][a-z0-9_]*`, never an expression keyword such as `end` or `null`); the server resolves collisions (a built-in column gets a `comapeo_` prefix when a tag key takes its name) and sanitises tag keys.
-- Built-in columns for `observations`: `id`, `category`, `created_at`, `updated_at`, `created_by`, `updated_by` (device names, falling back to the device id), `accuracy`, `altitude`, `photo_count`, `audio_count`.
+- Built-in columns for `observations`: `id`, `category`, `notes`, `created_at`, `updated_at`, `created_by`, `updated_by` (device names, falling back to the device id), `accuracy`, `altitude`, `photo_count`, `audio_count`. `notes` holds the observation's notes (the `notes` tag). When the project defines a field whose tag key is `notes`, that field's column is the notes column and there is no built-in one.
 - Built-in columns for `tracks`: `id`, `category`, `created_at`, `updated_at`, `created_by`, `updated_by`, `start_time`, `end_time`.
 
 ### `layers.getFeatures`
@@ -147,6 +149,7 @@ Result:
 ```
 
 - Deleted documents are never returned as features. `removed` is present only when `ids` was given, and lists the requested ids that are deleted or no longer exist.
+- `version` names the version of the document that CoMapeo shows.
 - `geometry` is a GeoJSON geometry in WGS 84, or `null` (an observation with no location). Point coordinates are `[lon, lat]`.
 - For `LineString` features an extra member `"times": [<ISO 8601>, …]`, on the feature beside `geometry` (not inside it), runs parallel to `coordinates`.
 - `properties` has a value (possibly `null`) for every column in the layer definition.
@@ -173,6 +176,21 @@ While subscribed, the server sends:
 
 Notifications may be batched and delayed by up to a second. Subscriptions end when the connection closes. A subscription also ends, without a notification, if this device leaves the project; requests for that project then give `PROJECT_NOT_FOUND`.
 
-## Reserved for later versions
+## Changes within a version
 
-`features.update` and `features.delete` (editing), each carrying the `version` the client last saw so that a stale save is refused.
+Within protocol version 1 these may be added, because clients ignore unknown properties and notification methods, and servers ignore unknown properties in params:
+
+- New methods. A server that lacks one answers `METHOD_NOT_FOUND`.
+- New optional properties in params, results and notifications. Absence must have a defined meaning.
+- New error codes, returned only by methods or for params that an older client never sends.
+- New notification methods.
+- New values where this document says clients ignore or fall back on unknown ones (column `type`).
+- New columns and layers, which clients must already cope with.
+
+These need a new protocol version: removing or renaming anything, changing the meaning or type of an existing property, changing what an existing method does for params an older client sends, changing the framing, and making a client's existing behaviour unsafe. `hello` and its replies cannot change even then.
+
+Added so far within version 1: the `notes` built-in column.
+
+## Not offered yet
+
+Editing: `features.update` and `features.delete` answer `METHOD_NOT_FOUND`. A design for editing within version 1 was built and set aside for a later release; it is kept on the `parked/editing` branch.

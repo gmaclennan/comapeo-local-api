@@ -2,4 +2,4 @@
 '@comapeo/local-api': minor
 ---
 
-Serve CoMapeo project data read-only over a local socket (protocol version 1): handshake with a secret from the discovery file, `projects.list`, `layers.list`, `layers.getFeatures`, `categories.list` and `subscribe`/`unsubscribe` with change notifications.
+Serve CoMapeo project data read-only over a local socket (protocol version 1): handshake with a secret from the discovery file, `projects.list`, `layers.list`, `layers.getFeatures`, `categories.list` and `subscribe`/`unsubscribe` with change notifications. Observations carry their notes in a `notes` column.
