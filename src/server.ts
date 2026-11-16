@@ -1,7 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import * as fs from 'node:fs/promises'
 import * as net from 'node:net'
-import { setTimeout as delay } from 'node:timers/promises'
 
 import type { MapeoManager } from '@comapeo/core'
 
@@ -14,9 +13,7 @@ import {
 	writeDiscoveryFile,
 	type SocketLocation,
 } from './discovery.ts'
-import { Editor, type EditHooks, type EditTarget } from './editing.ts'
 import {
-	EditingDisabled,
 	InternalError,
 	MethodNotFound,
 	PROTOCOL_ERROR_CODES,
@@ -33,18 +30,14 @@ import {
 } from './framing.ts'
 import { SERVER_INFO } from './package-info.ts'
 import {
-	optionalCategoryId,
-	optionalForks,
 	optionalIds,
 	optionalLang,
 	optionalLimit,
-	optionalPoint,
-	optionalProperties,
 	optionalString,
 	requireString,
 	type Params,
 } from './params.ts'
-import { getLayerSpec, ProjectData } from './project-data.ts'
+import { ProjectData } from './project-data.ts'
 import { Subscriptions, type Subscriber } from './subscriptions.ts'
 
 export const PROTOCOL_VERSIONS: readonly number[] = [1]
@@ -65,17 +58,6 @@ export interface LocalApiServerOptions {
 	app: AppInfo
 	/** Unix socket path or Windows named pipe; generated when omitted */
 	socketPath?: string
-	/**
-	 * Lets clients change and delete observations (PROTOCOL.md "Editing").
-	 * Off unless true; fixed for the life of the server.
-	 */
-	allowEdits?: boolean
-}
-
-/** Not part of the package's API: seams for tests and the dev command. */
-export interface InternalServerOptions extends EditHooks {
-	/** Holds back each edit's reply, after the edit is written */
-	editReplyDelayMs?: number
 }
 
 export interface ListenResult {
@@ -113,10 +95,7 @@ function toWireError(err: unknown): WireError {
 		typeof err.code === 'string' &&
 		PROTOCOL_ERROR_CODES.has(err.code)
 	) {
-		const data = 'data' in err ? err.data : undefined
-		return data === undefined
-			? { code: err.code, message: err.message }
-			: { code: err.code, message: err.message, data }
+		return { code: err.code, message: err.message }
 	}
 	const internal = new InternalError()
 	const detail = err instanceof Error ? err.message : String(err)
@@ -310,47 +289,18 @@ class Connection implements Subscriber {
 	}
 }
 
-function editTarget(params: Params): EditTarget {
-	return {
-		projectId: requireString(params, 'projectId'),
-		layerId: requireString(params, 'layerId'),
-		id: requireString(params, 'id'),
-		version: requireString(params, 'version'),
-		forks: optionalForks(params),
-	}
-}
-
 /**
- * Creates a server that exposes project data from `manager` on a local
- * socket, following PROTOCOL.md version 1. Data can be changed only when
- * `allowEdits` is true.
+ * Creates a server that exposes read-only project data from `manager` on a
+ * local socket, following PROTOCOL.md version 1.
  */
 export function createLocalApiServer(
 	options: LocalApiServerOptions,
 ): LocalApiServer {
-	return createServer(options)
-}
-
-export function createServer(
-	options: LocalApiServerOptions,
-	internal: InternalServerOptions = {},
-): LocalApiServer {
 	const { manager, discoveryDir, app } = options
-	const allowEdits = options.allowEdits === true
-	const data = new ProjectData(manager, { allowEdits })
-	const subscriptions = new Subscriptions({
-		isJoined: (projectId) => data.isJoined(projectId),
-		onSchemaChange: (projectId) => data.invalidate(projectId),
-	})
-	const { editReplyDelayMs = 0, ...hooks } = internal
-	const editor = new Editor(data, subscriptions, hooks)
-	const releasing = new AbortController()
-	const afterEdit = () =>
-		editReplyDelayMs > 0
-			? delay(editReplyDelayMs, undefined, {
-					signal: releasing.signal,
-				}).catch(() => {})
-			: undefined
+	const data = new ProjectData(manager)
+	const subscriptions = new Subscriptions((projectId) =>
+		data.isJoined(projectId),
+	)
 	const connections = new Set<Connection>()
 	const inFlight = new Set<Promise<void>>()
 	const secret = generateSecret()
@@ -401,41 +351,6 @@ export function createServer(
 		async unsubscribe(params, connection) {
 			subscriptions.remove(requireString(params, 'projectId'), connection)
 			return {}
-		},
-		async 'features.update'(params) {
-			const req = {
-				...editTarget(params),
-				properties: optionalProperties(params),
-				categoryId: optionalCategoryId(params),
-				geometry: optionalPoint(params),
-				lang: optionalLang(params),
-			}
-			if (
-				req.categoryId === undefined &&
-				req.geometry === undefined &&
-				Object.keys(req.properties ?? {}).length === 0
-			) {
-				throw new InvalidParams({ reason: 'there is nothing to change' })
-			}
-			if (!allowEdits) throw new EditingDisabled()
-			const project = await data.getProject(req.projectId)
-			const spec = getLayerSpec(req.layerId)
-			try {
-				return await editor.update(project, spec, req)
-			} finally {
-				await afterEdit()
-			}
-		},
-		async 'features.delete'(params) {
-			const req = editTarget(params)
-			if (!allowEdits) throw new EditingDisabled()
-			const project = await data.getProject(req.projectId)
-			const spec = getLayerSpec(req.layerId)
-			try {
-				return await editor.delete(project, spec, req)
-			} finally {
-				await afterEdit()
-			}
 		},
 	}
 
@@ -540,7 +455,6 @@ export function createServer(
 		try {
 			for (const connection of [...connections]) connection.destroy()
 			data.abort()
-			releasing.abort()
 			// A running handler can hold a media server connection open, delaying the host's close
 			await Promise.all(inFlight)
 			subscriptions.close()

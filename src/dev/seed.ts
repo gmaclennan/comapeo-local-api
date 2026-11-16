@@ -198,7 +198,7 @@ const choice = (
  * multi-choice and numeric options, and two categories told apart by a tag
  * that one of their fields sets.
  */
-export async function addEditingCategories(project: MapeoProject) {
+export async function addFieldTypeCategories(project: MapeoProject) {
 	const presets = (await project.preset.getMany()) as PresetDoc[]
 	const iconRef = presets.find((p) => p.iconRef)?.iconRef
 	const create = async (field: FieldValue) => {
@@ -262,30 +262,31 @@ export async function addEditingCategories(project: MapeoProject) {
 	await category('Spring', { 'water-source': 'spring' }, [source], '#8AC926')
 }
 
-const EDITING_EXAMPLES: Array<{ name: string; tags: Observation['tags'] }> = [
-	{
-		name: 'Survey plot',
-		tags: {
-			'plot-area': 2.5,
-			'visit-date': '2026-03-01',
-			threats: ['fire', 'logging'],
-			'plot-quality': 2,
+const FIELD_TYPE_EXAMPLES: Array<{ name: string; tags: Observation['tags'] }> =
+	[
+		{
+			name: 'Survey plot',
+			tags: {
+				'plot-area': 2.5,
+				'visit-date': '2026-03-01',
+				threats: ['fire', 'logging'],
+				'plot-quality': 2,
+			},
 		},
-	},
-	{ name: 'Well', tags: { 'well-depth': 12 } },
-	{ name: 'Spring', tags: {} },
-]
+		{ name: 'Well', tags: { 'well-depth': 12 } },
+		{ name: 'Spring', tags: {} },
+	]
 
 /**
- * One observation in each category from `addEditingCategories`, with every
- * field answered, so that there is always one of each to edit.
+ * One observation in each category from `addFieldTypeCategories`, with every
+ * field answered, so that every kind of value is always served.
  */
-export async function addEditingObservations(
+export async function addFieldTypeExamples(
 	project: MapeoProject,
 	random: Random,
 ) {
 	const presets = (await project.preset.getMany()) as PresetDoc[]
-	for (const { name, tags } of EDITING_EXAMPLES) {
+	for (const { name, tags } of FIELD_TYPE_EXAMPLES) {
 		const preset = presets.find((p) => p.name === name)
 		if (!preset) throw new Error(`No category named ${name}`)
 		const settlement = pick(random, SETTLEMENTS)
@@ -303,7 +304,7 @@ export async function addEditingObservations(
 			},
 		})
 	}
-	return EDITING_EXAMPLES.length
+	return FIELD_TYPE_EXAMPLES.length
 }
 
 export interface SeedOptions {

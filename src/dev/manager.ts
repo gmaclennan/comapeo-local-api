@@ -12,8 +12,6 @@ const require = createRequire(import.meta.url)
 
 export interface DevManager {
 	manager: MapeoManager
-	/** The temporary directory holding the cores, removed by close() */
-	storageDir: string
 	close(): Promise<void>
 }
 
@@ -54,7 +52,6 @@ export async function createDevManager({
 	let closing: Promise<void> | null = null
 	return {
 		manager,
-		storageDir: coreStorage,
 		close() {
 			closing ??= (async () => {
 				if (startMediaServer) await fastifyController.stop()
