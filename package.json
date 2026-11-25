@@ -80,19 +80,19 @@
 		"@trivago/prettier-plugin-sort-imports": "^6.0.2",
 		"@types/node": "^22.20.5",
 		"c8": "^12.0.0",
-		"eslint": "^10.14.0",
+		"eslint": "^10.15.0",
 		"fastify": "^4.29.1",
 		"globals": "^17.14.0",
 		"husky": "^9.1.7",
 		"jpeg-js": "^0.4.4",
-		"knip": "^6.45.0",
-		"lint-staged": "^17.6.0",
+		"knip": "^6.46.0",
+		"lint-staged": "^17.6.1",
 		"npm-run-all2": "^9.0.4",
-		"prettier": "^3.9.10",
+		"prettier": "^3.10.1",
 		"publint": "^0.3.25",
 		"rimraf": "^6.1.4",
 		"typescript": "~6.0",
-		"typescript-eslint": "^8.72.2"
+		"typescript-eslint": "^8.73.0"
 	},
 	"dependencies": {
 		"custom-error-creator": "^1.4.0"
